@@ -298,6 +298,17 @@ async function rememberMessageMap(adminMessageId, guestChatId) {
   });
 }
 
+async function rememberForceReplyPrompt(promptMessageId, guestChatId) {
+  return kvPutJson(`force-reply-${promptMessageId}`, {
+    guestChatId: String(guestChatId),
+    createdAt: Date.now(),
+  }, { expirationTtl: MESSAGE_MAP_TTL });
+}
+
+async function clearForceReplyPrompt(promptMessageId) {
+  return kvPutJson(`force-reply-${promptMessageId}`, null, { expirationTtl: 60 });
+}
+
 async function rememberGuestInfo(message) {
   const chatId = String(message.chat.id);
   const previous = await kvGetJson(`guest-info-${chatId}`, null);
@@ -401,10 +412,27 @@ async function handleAdminMessage(message, command) {
       adminMessageId: message.message_id,
       createdAt: Date.now(),
     });
+    const repliedPromptId = message.reply_to_message?.message_id;
+    if (repliedPromptId) {
+      const promptRecord = await kvGetJson(`force-reply-${repliedPromptId}`, null);
+      if (promptRecord) {
+        await deleteMessage({ chat_id: ADMIN_UID, message_id: repliedPromptId });
+        await clearForceReplyPrompt(repliedPromptId);
+      }
+    }
     return sendMarkdown(ADMIN_UID, escapeMarkdown(`人偶已经转达给 UID:${guestChatId} 了喵`), {
       reply_parameters: { message_id: message.message_id },
       reply_markup: revokeReplyKeyboard(guestChatId, copied.result.message_id),
     });
+  }
+
+  const repliedPromptId = message.reply_to_message?.message_id;
+  if (repliedPromptId) {
+    const promptRecord = await kvGetJson(`force-reply-${repliedPromptId}`, null);
+    if (promptRecord) {
+      await deleteMessage({ chat_id: ADMIN_UID, message_id: repliedPromptId });
+      await clearForceReplyPrompt(repliedPromptId);
+    }
   }
 
   return sendMarkdown(ADMIN_UID, escapeMarkdown(`转达失败：${copied.description || 'Unknown error'}`));
@@ -455,6 +483,7 @@ async function onCallbackQuery(callbackQuery) {
     });
     if (prompt.ok) {
       await rememberMessageMap(prompt.result.message_id, guestChatId);
+      await rememberForceReplyPrompt(prompt.result.message_id, guestChatId);
     }
     return answerCallbackQuery({ callback_query_id: callbackQuery.id, text: '请回复人偶的新提示消息。' });
   }
