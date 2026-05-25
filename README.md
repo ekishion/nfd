@@ -9,7 +9,7 @@ No Fraud / Node Forward Bot
 - 单个 `worker.js` 即可部署，适合 Cloudflare Worker / KV。
 - 用户消息自动转发给管理员，管理员回复转发消息即可回传给原用户。
 - 管理员回复用户消息可执行 `/block`、`/unblock`、`/checkblock`。
-- 支持关键词屏蔽，可通过环境变量或管理员命令维护；多次违规可自动拉黑。
+- 支持关键词屏蔽，可通过环境变量、远程 keyword.db 或管理员命令维护；多次违规可自动拉黑。
 - 用户留言成功转达后会收到回执，回执和警告带冷却，避免刷屏。
 - 管理员收到留言时会带快捷按钮，可直接回复、查看留言人信息、屏蔽、解除屏蔽、检查状态和撤回最近回复。
 - 管理员回复成功后的确认消息会带“撤回这条回复”按钮，可撤回 bot 发给用户的上一条回复。
@@ -27,7 +27,6 @@ No Fraud / Node Forward Bot
    - `ENV_BOT_TOKEN`：BotFather 提供的 token。
    - `ENV_BOT_SECRET`：webhook secret。
    - `ENV_ADMIN_UID`：管理员 Telegram 用户 ID。
-   - `ENV_BLOCK_KEYWORDS`：可选，逗号或换行分隔的关键词屏蔽列表。
    - `ENV_KEYWORD_NOTICE_TO_USER`：可选，设为 `false` 时关键词拦截不通知用户。
    - `ENV_USER_ACK_COOLDOWN_MS`：可选，留言成功回执冷却时间，默认 `30000`。
    - `ENV_COMMAND_WARNING_COOLDOWN_MS`：可选，用户误触管理命令或被屏蔽提示冷却时间，默认 `60000`。
@@ -37,6 +36,7 @@ No Fraud / Node Forward Bot
    - `ENV_START_MESSAGE_URL`：可选，自定义 MarkdownV2 启动文案 URL。
    - `ENV_NOTIFICATION_URL`：可选，自定义 MarkdownV2 交易提醒 URL。
    - `ENV_FRAUD_DB_URL`：可选，自定义诈骗 UID 数据库 URL。
+   - `ENV_KEYWORD_DB_URL`：可选，自定义关键词数据库 URL。
 6. 将 [worker.js](./worker.js) 复制到 Worker。
 7. 访问 `https://xxx.workers.dev/registerWebhook` 注册 webhook。
 
@@ -50,8 +50,13 @@ No Fraud / Node Forward Bot
 - 管理员发送 `/help` 可查看命令。
 - 管理员回复用户消息发送 `/block`、`/unblock`、`/checkblock` 可管理该用户。
 - 管理员发送 `/addkeyword 关键词`、`/delkeyword 关键词`、`/keywords` 可管理关键词屏蔽。
+- 管理员发送 `/synckeywords` 可将 `keyword.db` 中的关键词同步到 KV。
 - 管理员发送 `/stats` 可查看基础统计。
 - 管理员也可以使用留言下方按钮完成常用操作；“撤回”依赖 Telegram `deleteMessage`，受 Telegram 删除时间限制影响。
+
+## 关键词数据
+
+[data/keyword.db](./data/keyword.db) 为关键词屏蔽数据库，格式为每行一个关键词。Bot 启动时会从远程拉取并与环境变量、KV 中的关键词合并；管理员也可通过 `/synckeywords` 手动同步到 KV。
 
 ## 诈骗数据
 

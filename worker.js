@@ -16,6 +16,7 @@ const KEYWORD_NOTICE_TO_USER = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'tru
 const AUTO_BLOCK_KEYWORD_VIOLATORS = getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false';
 
 const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/HuIn2479/nfd/main/data/fraud.db');
+const keywordDb = getOptionalEnv('ENV_KEYWORD_DB_URL', 'https://raw.githubusercontent.com/HuIn2479/nfd/main/data/keyword.db');
 const notificationUrl = getOptionalEnv('ENV_NOTIFICATION_URL');
 const startMsgUrl = getOptionalEnv('ENV_START_MESSAGE_URL');
 
@@ -25,6 +26,7 @@ const ADMIN_COMMANDS = new Set([
   '/keywords',
   '/addkeyword',
   '/delkeyword',
+  '/synckeywords',
   '/block',
   '/unblock',
   '/checkblock',
@@ -45,13 +47,23 @@ const DEFAULT_NOTIFICATION = [
   '4\\. 如果感觉不对劲，请及时到论坛或群组反馈喵。',
 ].join('\n');
 
-let fraudCache = {
-  expiresAt: 0,
-  ids: new Set(),
-};
+const remoteDbCache = new Map();
 
 function getOptionalEnv(name, fallback = '') {
   return Object.prototype.hasOwnProperty.call(globalThis, name) ? String(globalThis[name] ?? '') : fallback;
+}
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {
+  const cached = remoteDbCache.get(url);
+  if (cached && cached.expiresAt > Date.now()) return cached.lines;
+  const text = await fetch(url).then((r) => r.text());
+  const lines = text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
+  remoteDbCache.set(url, { expiresAt: Date.now() + ttl, lines });
+  return lines;
 }
 
 function apiUrl(methodName, params = null) {
@@ -240,11 +252,8 @@ async function sendCooldownPlainText(chatId, key, text, cooldownMs) {
 
 async function getKeywordRules() {
   const fromKv = await kvGetJson('blocked-keywords', []);
-  const fromEnv = getOptionalEnv('ENV_BLOCK_KEYWORDS')
-    .split(/[\n,]/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-  return Array.from(new Set([...fromEnv, ...(Array.isArray(fromKv) ? fromKv : [])]));
+  const fromDb = await fetchKeywordDb();
+  return Array.from(new Set([...fromDb, ...asArray(fromKv)]));
 }
 
 async function findBlockedKeyword(message) {
@@ -382,12 +391,22 @@ async function onMessage(message) {
   return handleGuestMessage(message);
 }
 
+async function clearRepliedPrompt(message) {
+  const promptId = message.reply_to_message?.message_id;
+  if (!promptId) return;
+  const record = await kvGetJson(`force-reply-${promptId}`, null);
+  if (!record) return;
+  await deleteMessage({ chat_id: ADMIN_UID, message_id: promptId });
+  await clearForceReplyPrompt(promptId);
+}
+
 async function handleAdminMessage(message, command) {
   if (command === '/help') return sendAdminHelp();
   if (command === '/stats') return sendStats();
   if (command === '/keywords') return listKeywords();
   if (command === '/addkeyword') return addKeyword(message);
   if (command === '/delkeyword') return deleteKeyword(message);
+  if (command === '/synckeywords') return syncKeywordDb();
 
   if (command === '/block') return handleBlock(message);
   if (command === '/unblock') return handleUnBlock(message);
@@ -412,29 +431,14 @@ async function handleAdminMessage(message, command) {
       adminMessageId: message.message_id,
       createdAt: Date.now(),
     });
-    const repliedPromptId = message.reply_to_message?.message_id;
-    if (repliedPromptId) {
-      const promptRecord = await kvGetJson(`force-reply-${repliedPromptId}`, null);
-      if (promptRecord) {
-        await deleteMessage({ chat_id: ADMIN_UID, message_id: repliedPromptId });
-        await clearForceReplyPrompt(repliedPromptId);
-      }
-    }
+    await clearRepliedPrompt(message);
     return sendMarkdown(ADMIN_UID, escapeMarkdown(`人偶已经转达给 UID:${guestChatId} 了喵`), {
       reply_parameters: { message_id: message.message_id },
       reply_markup: revokeReplyKeyboard(guestChatId, copied.result.message_id),
     });
   }
 
-  const repliedPromptId = message.reply_to_message?.message_id;
-  if (repliedPromptId) {
-    const promptRecord = await kvGetJson(`force-reply-${repliedPromptId}`, null);
-    if (promptRecord) {
-      await deleteMessage({ chat_id: ADMIN_UID, message_id: repliedPromptId });
-      await clearForceReplyPrompt(repliedPromptId);
-    }
-  }
-
+  await clearRepliedPrompt(message);
   return sendMarkdown(ADMIN_UID, escapeMarkdown(`转达失败：${copied.description || 'Unknown error'}`));
 }
 
@@ -688,6 +692,7 @@ async function sendAdminHelp(prefix = '') {
     '`/addkeyword 关键词` 添加不能转达的词',
     '`/delkeyword 关键词` 删除不能转达的词',
     '`/keywords` 查看关键词小纸条',
+    '`/synckeywords` 从 keyword\\.db 同步关键词到小纸条',
     '`/stats` 查看人偶今日工作记录',
     '',
     '直接回复人偶转来的留言，就会把内容转达给原来的客人喵。',
@@ -711,7 +716,7 @@ async function addKeyword(message) {
   if (!keyword) return sendMarkdown(ADMIN_UID, '用法：`/addkeyword 关键词`');
 
   const current = await kvGetJson('blocked-keywords', []);
-  const next = Array.from(new Set([...(Array.isArray(current) ? current : []), keyword]));
+  const next = Array.from(new Set([...asArray(current), keyword]));
   await kvPutJson('blocked-keywords', next);
   return sendMarkdown(ADMIN_UID, escapeMarkdown(`已把「${keyword}」写进关键词小纸条`));
 }
@@ -721,9 +726,24 @@ async function deleteKeyword(message) {
   if (!keyword) return sendMarkdown(ADMIN_UID, '用法：`/delkeyword 关键词`');
 
   const current = await kvGetJson('blocked-keywords', []);
-  const next = (Array.isArray(current) ? current : []).filter((item) => item !== keyword);
+  const next = asArray(current).filter((item) => item !== keyword);
   await kvPutJson('blocked-keywords', next);
   return sendMarkdown(ADMIN_UID, escapeMarkdown(`已从关键词小纸条擦掉「${keyword}」`));
+}
+
+async function syncKeywordDb() {
+  const fromDb = await fetchKeywordDb();
+  if (!fromDb.length) {
+    return sendMarkdown(ADMIN_UID, 'keyword\\.db 里没有关键词喵。');
+  }
+  const current = asArray(await kvGetJson('blocked-keywords', []));
+  const merged = Array.from(new Set([...current, ...fromDb]));
+  await kvPutJson('blocked-keywords', merged);
+  const added = merged.length - current.length;
+  return sendMarkdown(
+    ADMIN_UID,
+    escapeMarkdown(`已从 keyword.db 同步 ${fromDb.length} 个关键词，新增 ${added} 个，小纸条现共 ${merged.length} 个`),
+  );
 }
 
 async function sendStats() {
@@ -765,13 +785,10 @@ async function unRegisterWebhook() {
 }
 
 async function isFraud(id) {
-  const now = Date.now();
-  if (fraudCache.expiresAt <= now) {
-    const db = await fetch(fraudDb).then((r) => r.text());
-    fraudCache = {
-      expiresAt: now + FRAUD_CACHE_TTL,
-      ids: new Set(db.split(/\r?\n/).map((value) => value.trim()).filter(Boolean)),
-    };
-  }
-  return fraudCache.ids.has(String(id));
+  const lines = await fetchRemoteDb(fraudDb);
+  return lines.includes(String(id));
+}
+
+async function fetchKeywordDb() {
+  return fetchRemoteDb(keywordDb);
 }
