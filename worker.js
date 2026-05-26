@@ -15,8 +15,8 @@ const ENABLE_NOTIFICATION = true;
 const KEYWORD_NOTICE_TO_USER = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'true') !== 'false';
 const AUTO_BLOCK_KEYWORD_VIOLATORS = getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false';
 
-const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/HuIn2479/nfd/main/data/fraud.db');
-const keywordDb = getOptionalEnv('ENV_KEYWORD_DB_URL', 'https://raw.githubusercontent.com/HuIn2479/nfd/main/data/keyword.db');
+const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/fraud.db');
+const keywordDb = getOptionalEnv('ENV_KEYWORD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/keyword.db');
 const notificationUrl = getOptionalEnv('ENV_NOTIFICATION_URL');
 const startMsgUrl = getOptionalEnv('ENV_START_MESSAGE_URL');
 
