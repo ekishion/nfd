@@ -6,6 +6,7 @@ import { FRAUD_CACHE_TTL, getFraudDbUrl, getKeywordDbUrl, getDefaultEnvConfig } 
 import { sendPlainText } from './telegram.js';
 
 export const memoryCache = new Map();
+const pendingStats = new Map();
 
 function pruneExpiredMemoryCache() {
   const now = Date.now();
@@ -85,9 +86,22 @@ export async function updateRuntimeConfig(patch) {
 }
 
 export async function incrementStat(name) {
+  const count = (pendingStats.get(name) || 0) + 1;
+  if (count >= 5) {
+    pendingStats.delete(name);
+    const key = `stat-${name}`;
+    const current = Number((await nfd.get(key)) || 0);
+    await nfd.put(key, String(current + count));
+  } else {
+    pendingStats.set(name, count);
+  }
+}
+
+export async function getStatCount(name) {
   const key = `stat-${name}`;
-  const current = Number((await nfd.get(key)) || 0);
-  await nfd.put(key, String(current + 1));
+  const fromKv = Number((await nfd.get(key)) || 0);
+  const fromMem = Number(pendingStats.get(name) || 0);
+  return fromKv + fromMem;
 }
 
 export async function checkCooldown(key, cooldownMs) {
@@ -113,15 +127,26 @@ export async function sendCooldownPlainText(chatId, key, text, cooldownMs) {
 }
 
 export async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {
-  const cached = getMemoryCache(`remote-${url}`);
+  const cacheKey = `remote-${url}`;
+  const cached = getMemoryCache(cacheKey);
   if (cached) return cached;
+
+  const kvBackupKey = `backup-${url}`;
   try {
     const text = await fetch(url).then((r) => r.text());
     const lines = text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
-    setMemoryCache(`remote-${url}`, lines, ttl);
+    setMemoryCache(cacheKey, lines, ttl);
+    // Background backup to KV for offline resilience
+    await kvPutJson(kvBackupKey, lines, { expirationTtl: 7 * 24 * 3600 });
     return lines;
   } catch (e) {
     console.log(JSON.stringify({ error: 'fetch-remote-db-failed', url, message: e.message }));
+    // Fallback to KV backup if network/remote fails
+    const backup = await kvGetJson(kvBackupKey, null);
+    if (Array.isArray(backup) && backup.length > 0) {
+      setMemoryCache(cacheKey, backup, ttl);
+      return backup;
+    }
     return [];
   }
 }

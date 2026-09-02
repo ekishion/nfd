@@ -10,6 +10,7 @@ import {
   cachedKvPutJson,
   invalidateMemoryCache,
   incrementStat,
+  getStatCount,
   sendCooldownPlainText,
   fetchKeywordDb,
 } from './cache.js';
@@ -363,7 +364,7 @@ export async function sendStats() {
     'guest-command-warning',
     'blocked-user-message',
   ];
-  const values = await Promise.all(names.map((name) => nfd.get(`stat-${name}`)));
-  const lines = names.map((name, index) => mdLine(name, values[index] || '0'));
+  const values = await Promise.all(names.map((name) => getStatCount(name)));
+  const lines = names.map((name, index) => mdLine(name, String(values[index] ?? 0)));
   return sendMarkdown(adminUid, ['*人偶工作记录*', ...lines].join('\n'));
 }

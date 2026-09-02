@@ -73,14 +73,22 @@ export async function onUpdate(update) {
 export async function onMessage(message) {
   if (!message?.chat?.id) return;
 
+  const adminUid = getAdminUid();
+  const isAdmin = Boolean(adminUid && String(message.chat.id) === adminUid);
   const command = getCommand(message);
+
   if (command === '/start') {
+    if (isAdmin) {
+      return sendMarkdown(
+        message.chat.id,
+        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+      );
+    }
     const startMsg = await fetchTextOrDefault(getStartMsgUrl(), DEFAULT_START_MESSAGE);
     return sendMarkdown(message.chat.id, formatStartMessage(startMsg, message.from || {}));
   }
 
-  const adminUid = getAdminUid();
-  if (adminUid && String(message.chat.id) === adminUid) {
+  if (isAdmin) {
     return handleAdminMessage(message, command);
   }
 

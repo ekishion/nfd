@@ -102,6 +102,7 @@ function sleep(ms) {
 // src/cache.js - Memory TTL Cache, KV Wrapper & Remote DB Management
 // ==============================================================================
 const memoryCache = new Map();
+const pendingStats = new Map();
 
 function pruneExpiredMemoryCache() {
   const now = Date.now();
@@ -172,9 +173,21 @@ async function updateRuntimeConfig(patch) {
   return next;
 }
 async function incrementStat(name) {
+  const count = (pendingStats.get(name) || 0) + 1;
+  if (count >= 5) {
+    pendingStats.delete(name);
+    const key = `stat-${name}`;
+    const current = Number((await nfd.get(key)) || 0);
+    await nfd.put(key, String(current + count));
+  } else {
+    pendingStats.set(name, count);
+  }
+}
+async function getStatCount(name) {
   const key = `stat-${name}`;
-  const current = Number((await nfd.get(key)) || 0);
-  await nfd.put(key, String(current + 1));
+  const fromKv = Number((await nfd.get(key)) || 0);
+  const fromMem = Number(pendingStats.get(name) || 0);
+  return fromKv + fromMem;
 }
 async function checkCooldown(key, cooldownMs) {
   const now = Date.now();
@@ -197,15 +210,26 @@ async function sendCooldownPlainText(chatId, key, text, cooldownMs) {
   return sendPlainText(chatId, text);
 }
 async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {
-  const cached = getMemoryCache(`remote-${url}`);
+  const cacheKey = `remote-${url}`;
+  const cached = getMemoryCache(cacheKey);
   if (cached) return cached;
+
+  const kvBackupKey = `backup-${url}`;
   try {
     const text = await fetch(url).then((r) => r.text());
     const lines = text.split(/\r?\n/).map((v) => v.trim()).filter(Boolean);
-    setMemoryCache(`remote-${url}`, lines, ttl);
+    setMemoryCache(cacheKey, lines, ttl);
+    // Background backup to KV for offline resilience
+    await kvPutJson(kvBackupKey, lines, { expirationTtl: 7 * 24 * 3600 });
     return lines;
   } catch (e) {
     console.log(JSON.stringify({ error: 'fetch-remote-db-failed', url, message: e.message }));
+    // Fallback to KV backup if network/remote fails
+    const backup = await kvGetJson(kvBackupKey, null);
+    if (Array.isArray(backup) && backup.length > 0) {
+      setMemoryCache(cacheKey, backup, ttl);
+      return backup;
+    }
     return [];
   }
 }
@@ -929,6 +953,7 @@ import {
   cachedKvPutJson,
   invalidateMemoryCache,
   incrementStat,
+  getStatCount,
   sendCooldownPlainText,
   fetchKeywordDb,
 } from './cache.js';
@@ -1261,8 +1286,8 @@ async function sendStats() {
     'guest-command-warning',
     'blocked-user-message',
   ];
-  const values = await Promise.all(names.map((name) => nfd.get(`stat-${name}`)));
-  const lines = names.map((name, index) => mdLine(name, values[index] || '0'));
+  const values = await Promise.all(names.map((name) => getStatCount(name)));
+  const lines = names.map((name, index) => mdLine(name, String(values[index] ?? 0)));
   return sendMarkdown(adminUid, ['*人偶工作记录*', ...lines].join('\n'));
 }
 
@@ -1334,14 +1359,22 @@ async function onUpdate(update) {
 async function onMessage(message) {
   if (!message?.chat?.id) return;
 
+  const adminUid = getAdminUid();
+  const isAdmin = Boolean(adminUid && String(message.chat.id) === adminUid);
   const command = getCommand(message);
+
   if (command === '/start') {
+    if (isAdmin) {
+      return sendMarkdown(
+        message.chat.id,
+        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+      );
+    }
     const startMsg = await fetchTextOrDefault(getStartMsgUrl(), DEFAULT_START_MESSAGE);
     return sendMarkdown(message.chat.id, formatStartMessage(startMsg, message.from || {}));
   }
 
-  const adminUid = getAdminUid();
-  if (adminUid && String(message.chat.id) === adminUid) {
+  if (isAdmin) {
     return handleAdminMessage(message, command);
   }
 
