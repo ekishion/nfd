@@ -15,6 +15,7 @@ const ENABLE_NOTIFICATION = getOptionalEnv('ENV_ENABLE_NOTIFICATION', 'true') !=
 const KEYWORD_NOTICE_TO_USER = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'true') !== 'false';
 const KEYWORD_NOTICE_TO_ADMIN = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_ADMIN', 'true') !== 'false';
 const REQUIRE_USERNAME = getOptionalEnv('ENV_REQUIRE_USERNAME', 'false') === 'true';
+const REQUIRE_PHOTO = getOptionalEnv('ENV_REQUIRE_PHOTO', getOptionalEnv('ENV_REQUIRE_AVATAR', 'false')) === 'true';
 const AUTO_BLOCK_KEYWORD_VIOLATORS = getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false';
 
 const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/fraud.db');
@@ -250,6 +251,26 @@ async function sendCooldownPlainText(chatId, key, text, cooldownMs) {
   if (lastSentAt && Date.now() - lastSentAt < cooldownMs) return null;
   await nfd.put(key, String(Date.now()));
   return sendPlainText(chatId, text);
+}
+
+async function checkUserHasPhoto(userId) {
+  if (!userId) return true;
+  const key = `has-photo-${userId}`;
+  const cached = await kvGetJson(key, null);
+  if (typeof cached === 'boolean') return cached;
+  try {
+    const res = await requestTelegram('getUserProfilePhotos', { user_id: Number(userId), limit: 1 });
+    if (!res.ok) {
+      return true;
+    }
+    const hasPhoto = Boolean(res.result && Number(res.result.total_count) > 0);
+    const ttl = hasPhoto ? 3600 : 300;
+    await kvPutJson(key, hasPhoto, { expirationTtl: ttl });
+    return hasPhoto;
+  } catch (e) {
+    console.log(JSON.stringify({ error: 'checkUserHasPhoto-failed', userId, message: e.message }));
+    return true;
+  }
 }
 
 async function getKeywordRules() {
@@ -584,6 +605,20 @@ async function handleGuestMessage(message) {
     );
   }
 
+  if (REQUIRE_PHOTO) {
+    const userId = message.from?.id || message.chat.id;
+    const hasPhoto = await checkUserHasPhoto(userId);
+    if (!hasPhoto) {
+      await incrementStat('no-photo-blocked');
+      return sendCooldownPlainText(
+        chatId,
+        `no-photo-${chatId}`,
+        '请先在 Telegram 设置个人头像后再留言喵。',
+        COMMAND_WARNING_COOLDOWN_MS,
+      );
+    }
+  }
+
   const blockedKeyword = await findBlockedKeyword(message);
   if (blockedKeyword) {
     const violation = await recordKeywordViolation(message, blockedKeyword);
@@ -766,6 +801,7 @@ async function sendStats() {
     'keyword-blocked',
     'keyword-auto-blocked',
     'no-username-blocked',
+    'no-photo-blocked',
     'guest-command-warning',
     'blocked-user-message',
   ];
