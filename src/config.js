@@ -23,6 +23,28 @@ export function getAdminUid() {
   return String(getOptionalEnv('ENV_ADMIN_UID', ''));
 }
 
+export function getForwardChatId() {
+  return String(getOptionalEnv('ENV_FORWARD_CHAT_ID', getAdminUid()));
+}
+
+export function getForwardThreadId() {
+  const tid = getOptionalEnv('ENV_FORWARD_THREAD_ID');
+  return tid && /^\d+$/.test(tid) ? Number(tid) : null;
+}
+
+export function getAlertChatId() {
+  return String(getOptionalEnv('ENV_ALERT_CHAT_ID', getForwardChatId()));
+}
+
+export function getAlertThreadId() {
+  const tid = getOptionalEnv('ENV_ALERT_THREAD_ID');
+  return tid && /^\d+$/.test(tid) ? Number(tid) : null;
+}
+
+export function getEnableForumTopics() {
+  return getOptionalEnv('ENV_ENABLE_FORUM_TOPICS', 'false') === 'true';
+}
+
 export function getUserAckCooldownMs() {
   return Number(getOptionalEnv('ENV_USER_ACK_COOLDOWN_MS', '30000'));
 }
@@ -63,6 +85,15 @@ export const ADMIN_COMMANDS = new Set([
   '/block',
   '/unblock',
   '/checkblock',
+  '/quick',
+  '/q',
+  '/quicks',
+  '/addquick',
+  '/delquick',
+  '/away',
+  '/back',
+  '/user',
+  '/tag',
 ]);
 
 export const DEFAULT_START_MESSAGE = typeof defaultStartMessage === 'string' && defaultStartMessage
@@ -94,6 +125,18 @@ export function getDefaultEnvConfig() {
     notice_admin: getOptionalEnv('ENV_KEYWORD_NOTICE_TO_ADMIN', 'true') !== 'false',
     notice_user: getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'true') !== 'false',
     enable_notify: getOptionalEnv('ENV_ENABLE_NOTIFICATION', 'true') !== 'false',
+    flood_protect: getOptionalEnv('ENV_ENABLE_FLOOD_PROTECTION', 'true') !== 'false',
+    flood_limit: Number(getOptionalEnv('ENV_FLOOD_LIMIT', '5')),
+    flood_window_seconds: Number(getOptionalEnv('ENV_FLOOD_WINDOW_SECONDS', '10')),
+    flood_mute_seconds: Number(getOptionalEnv('ENV_FLOOD_MUTE_SECONDS', '60')),
+    block_executables: getOptionalEnv('ENV_BLOCK_EXECUTABLES', 'true') !== 'false',
+    away_mode: getOptionalEnv('ENV_AWAY_MODE', 'false') === 'true',
+    away_message: getOptionalEnv('ENV_AWAY_MESSAGE', '人偶现在外出中，稍后会尽快回复您的留言喵。'),
+    forward_chat_id: getForwardChatId(),
+    forward_thread_id: getForwardThreadId(),
+    alert_chat_id: getAlertChatId(),
+    alert_thread_id: getAlertThreadId(),
+    enable_forum_topics: getEnableForumTopics(),
   };
 }
 

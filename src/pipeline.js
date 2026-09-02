@@ -25,6 +25,11 @@ import {
   sendCooldownPlainText,
   isFraud,
   fetchTextOrDefault,
+  getGuestTag,
+  trackGuestProfile,
+  getGuestTopicId,
+  setGuestTopicId,
+  getGuestIdByTopic,
 } from './cache.js';
 import {
   sendMarkdown,
@@ -32,8 +37,9 @@ import {
   forwardMessage,
   mdLine,
   buildMessageInfo,
-  buildGuestInfo,
+  buildUserName,
   adminMessageKeyboard,
+  createForumTopic,
 } from './telegram.js';
 import {
   isUserBlocked,
@@ -42,19 +48,9 @@ import {
   findBlockedKeyword,
   recordKeywordViolation,
   notifyKeywordBlocked,
+  checkFloodLimit,
+  isDangerousDocument,
 } from './moderation.js';
-
-export async function rememberGuestInfo(message) {
-  const chatId = String(message.chat.id);
-  const key = `guest-info-${chatId}`;
-  const previous = await cachedKvGetJson(key, 300000, null);
-  const next = {
-    ...buildGuestInfo(message),
-    firstSeenAt: previous?.firstSeenAt || Date.now(),
-  };
-  await cachedKvPutJson(key, next, {}, 300000);
-  return next;
-}
 
 export async function rememberMessageMap(adminMessageId, guestChatId) {
   setMemoryCache(`msg-map-${adminMessageId}`, String(guestChatId), 3600000);
@@ -64,6 +60,14 @@ export async function rememberMessageMap(adminMessageId, guestChatId) {
 }
 
 export async function getMappedGuestId(adminMessage) {
+  // 1. Check if message is sent inside a Forum Topic
+  const threadId = adminMessage?.message_thread_id;
+  if (threadId) {
+    const topicGuestId = await getGuestIdByTopic(threadId);
+    if (topicGuestId) return topicGuestId;
+  }
+
+  // 2. Check reply message ID mapping
   const replyMessageId = adminMessage?.reply_to_message?.message_id;
   if (!replyMessageId) return null;
   const cached = getMemoryCache(`msg-map-${replyMessageId}`);
@@ -76,16 +80,38 @@ export async function handleGuestMessage(message) {
   const config = await getRuntimeConfig();
   const warningCooldown = getCommandWarningCooldownMs();
 
-  // Parallelize non-dependent analytics and info recording with user check
+  // Parallelize analytics, profile update and user check
   const [isBlocked] = await Promise.all([
     isUserBlocked(chatId),
     incrementStat('guest-message'),
-    rememberGuestInfo(message),
+    trackGuestProfile(message),
   ]);
 
   if (isBlocked) {
     await incrementStat('blocked-user-message');
     return sendCooldownPlainText(chatId, `blocked-notice-${chatId}`, '这里暂时不能继续留言了喵。', warningCooldown);
+  }
+
+  // Anti-Flood / Rate Limiting
+  const floodCheck = await checkFloodLimit(chatId, config);
+  if (floodCheck.blocked) {
+    return sendCooldownPlainText(
+      chatId,
+      `flood-notice-${chatId}`,
+      `发送消息太频繁啦，请休息 ${floodCheck.remainingSeconds || 60} 秒后再试喵。`,
+      warningCooldown,
+    );
+  }
+
+  // Dangerous document filter
+  if (config.block_executables && isDangerousDocument(message)) {
+    await incrementStat('executable-blocked');
+    return sendCooldownPlainText(
+      chatId,
+      `exec-block-${chatId}`,
+      '抱歉，为了系统安全，不能转达可执行程序或安装包文件喵。',
+      warningCooldown,
+    );
   }
 
   if (config.req_username && !message.from?.username) {
@@ -160,7 +186,7 @@ export async function processGuestMessageBatch(messages, config = null) {
 
   const firstMessage = messages[0];
   const chatId = String(firstMessage.chat.id);
-  const adminUid = getAdminUid();
+  const forwardChatId = config.forward_chat_id || getAdminUid();
 
   const isBlocked = await isUserBlocked(chatId);
   if (isBlocked) {
@@ -196,12 +222,39 @@ export async function processGuestMessageBatch(messages, config = null) {
     return;
   }
 
-  if (!adminUid) {
-    console.log(JSON.stringify({ error: 'no-admin-uid-configured', chatId }));
+  if (!forwardChatId) {
+    console.log(JSON.stringify({ error: 'no-forward-chat-id-configured', chatId }));
     return;
   }
 
-  const infoReq = await sendMarkdown(adminUid, buildMessageInfo(firstMessage, messages.length));
+  let targetThreadId = config.forward_thread_id || null;
+
+  // Auto-create Forum Topic if enabled for supergroup
+  if (config.enable_forum_topics && forwardChatId.startsWith('-')) {
+    let topicId = await getGuestTopicId(chatId);
+    if (!topicId) {
+      const topicName = `${buildUserName(firstMessage.from || {})} (${chatId})`.slice(0, 128);
+      const createRes = await createForumTopic({
+        chat_id: forwardChatId,
+        name: topicName,
+      });
+      if (createRes.ok && createRes.result?.message_thread_id) {
+        topicId = createRes.result.message_thread_id;
+        await setGuestTopicId(chatId, topicId);
+      }
+    }
+    if (topicId) {
+      targetThreadId = topicId;
+    }
+  }
+
+  const threadParam = targetThreadId ? { message_thread_id: targetThreadId } : {};
+  const guestTag = await getGuestTag(chatId);
+  const infoReq = await sendMarkdown(
+    forwardChatId,
+    buildMessageInfo(firstMessage, messages.length, guestTag),
+    threadParam,
+  );
   if (infoReq.ok) {
     await rememberMessageMap(infoReq.result.message_id, chatId);
   }
@@ -210,10 +263,13 @@ export async function processGuestMessageBatch(messages, config = null) {
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     const isLast = i === messages.length - 1;
-    const extra = isLast ? { reply_markup: adminMessageKeyboard() } : {};
+    const extra = {
+      ...threadParam,
+      ...(isLast ? { reply_markup: adminMessageKeyboard() } : {}),
+    };
 
     const copyReq = await copyMessage({
-      chat_id: adminUid,
+      chat_id: forwardChatId,
       from_chat_id: msg.chat.id,
       message_id: msg.message_id,
       ...extra,
@@ -226,9 +282,10 @@ export async function processGuestMessageBatch(messages, config = null) {
     }
 
     const forwardReq = await forwardMessage({
-      chat_id: adminUid,
+      chat_id: forwardChatId,
       from_chat_id: msg.chat.id,
       message_id: msg.message_id,
+      ...threadParam,
     });
 
     if (forwardReq.ok) {
@@ -238,12 +295,13 @@ export async function processGuestMessageBatch(messages, config = null) {
     }
 
     await sendMarkdown(
-      adminUid,
+      forwardChatId,
       [
         '*人偶转达失败*',
         mdLine('用户ID', chatId),
         mdLine('错误', forwardReq.description || copyReq.description || 'Unknown error'),
       ].join('\n'),
+      threadParam,
     );
   }
 
@@ -253,7 +311,14 @@ export async function processGuestMessageBatch(messages, config = null) {
 }
 
 export async function handleGuestDelivered(message, config = null) {
+  if (!config) config = await getRuntimeConfig();
   const chatId = String(message.chat.id);
+
+  if (config.away_mode) {
+    const awayMsg = config.away_message || '人偶现在外出中，稍后会尽快回复您的留言喵。';
+    await sendCooldownPlainText(chatId, `away-notice-${chatId}`, awayMsg, 1800000); // 30 minutes cooldown
+  }
+
   await sendCooldownPlainText(
     chatId,
     `deliver-ack-${chatId}`,
@@ -266,11 +331,13 @@ export async function handleGuestDelivered(message, config = null) {
 export async function handleNotify(message, config = null) {
   if (!config) config = await getRuntimeConfig();
   const chatId = String(message.chat.id);
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const alertChatId = config.alert_chat_id || getAdminUid();
+  if (!alertChatId) return;
+
+  const extra = config.alert_thread_id ? { message_thread_id: config.alert_thread_id } : {};
 
   if (await isFraud(chatId)) {
-    return sendMarkdown(adminUid, `*诈骗库命中*\n${mdLine('UID', chatId)}`);
+    return sendMarkdown(alertChatId, `*诈骗库命中*\n${mdLine('UID', chatId)}`, extra);
   }
 
   if (!config.enable_notify) return;
@@ -279,6 +346,6 @@ export async function handleNotify(message, config = null) {
   if (!lastMsgTime || Date.now() - Number(lastMsgTime) > NOTIFY_INTERVAL) {
     await nfd.put(`lastmsg-${chatId}`, String(Date.now()));
     const notification = await fetchTextOrDefault(getNotificationUrl(), DEFAULT_NOTIFICATION);
-    return sendMarkdown(adminUid, notification);
+    return sendMarkdown(alertChatId, notification, extra);
   }
 }

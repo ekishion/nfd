@@ -56,6 +56,10 @@ export function answerCallbackQuery(msg = {}) {
   return requestTelegram('answerCallbackQuery', msg);
 }
 
+export function createForumTopic(msg = {}) {
+  return requestTelegram('createForumTopic', msg);
+}
+
 export function escapeMarkdown(value = '') {
   return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
@@ -108,17 +112,23 @@ export function formatStartMessage(template, user) {
   const username = escapeMarkdown(buildUserName(user));
   return template
     .replaceAll('{username}', username)
+    .replaceAll('{id}', String(user.id || ''))
+    .replaceAll('{name}', username)
     .replaceAll('{用户名}', username);
 }
 
-export function buildMessageInfo(message, count = 1) {
+export function buildMessageInfo(message, count = 1, tag = '') {
   const user = message.from || {};
+  const guestLabel = tag ? `${buildUserName(user)} [${tag}]` : `${buildUserName(user)} (${user.id || message.chat.id})`;
   const lines = [
     '*人偶收到新留言*',
-    mdLine('客人', `${buildUserName(user)} (${user.id || message.chat.id})`),
+    mdLine('客人', guestLabel),
   ];
   if (user.username) {
     lines.push(mdLine('用户名', `@${user.username}`));
+  }
+  if (tag) {
+    lines.push(mdLine('备注', tag));
   }
   if (message.chat?.type && message.chat.type !== 'private') {
     lines.push(mdLine('来源会话', `${message.chat.title || message.chat.id} / ${message.chat.type}`));
@@ -129,32 +139,21 @@ export function buildMessageInfo(message, count = 1) {
   return lines.join('\n');
 }
 
-export function buildGuestInfo(message) {
-  const user = message.from || {};
-  return {
-    chatId: String(message.chat.id),
-    userId: String(user.id || message.chat.id),
-    name: buildUserName(user),
-    username: user.username ? `@${user.username}` : '',
-    languageCode: user.language_code || '',
-    chatType: message.chat?.type || '',
-    chatTitle: message.chat?.title || '',
-    firstSeenAt: Date.now(),
-    lastSeenAt: Date.now(),
-  };
-}
+export function formatGuestProfile(profile = {}, tag = '', blocked = false, violationCount = 0) {
+  const firstSeenStr = profile?.firstSeen ? new Date(profile.firstSeen).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '-';
+  const lastSeenStr = profile?.lastSeen ? new Date(profile.lastSeen).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '-';
 
-export function formatGuestInfo(info = {}) {
   return [
-    '*留言人信息*',
-    mdLine('昵称', info.name || '-'),
-    mdLine('用户名', info.username || '-'),
-    mdLine('用户ID', info.userId || info.chatId || '-'),
-    mdLine('会话ID', info.chatId || '-'),
-    mdLine('语言', info.languageCode || '-'),
-    mdLine('会话类型', info.chatType || '-'),
-    mdLine('会话标题', info.chatTitle || '-'),
-    mdLine('最后留言', info.lastSeenAt ? new Date(info.lastSeenAt).toISOString() : '-'),
+    '*客人画像档案*',
+    mdLine('用户ID', profile?.userId || profile?.chatId || '-'),
+    mdLine('备注标签', tag || '无'),
+    mdLine('昵称', profile?.name || profile?.firstName || '-'),
+    mdLine('用户名', profile?.username ? `@${profile.username.replace(/^@/, '')}` : '-'),
+    mdLine('黑名单状态', blocked ? '已静音' : '正常'),
+    mdLine('累计留言数', String(profile?.messageCount || 0)),
+    mdLine('敏感词违规', String(violationCount || 0)),
+    mdLine('首次留言', firstSeenStr),
+    mdLine('最后活跃', lastSeenStr),
   ].join('\n');
 }
 

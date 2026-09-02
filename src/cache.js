@@ -2,11 +2,12 @@
 // src/cache.js - Memory TTL Cache, KV Wrapper & Remote DB Management
 // ==============================================================================
 
-import { FRAUD_CACHE_TTL, getFraudDbUrl, getKeywordDbUrl, getDefaultEnvConfig } from './config.js';
+import { FRAUD_CACHE_TTL, getFraudDbUrl, getKeywordDbUrl, getDefaultEnvConfig, asArray } from './config.js';
 import { sendPlainText } from './telegram.js';
 
 export const memoryCache = new Map();
 const pendingStats = new Map();
+const recentUpdates = new Set();
 
 function pruneExpiredMemoryCache() {
   const now = Date.now();
@@ -15,6 +16,17 @@ function pruneExpiredMemoryCache() {
       memoryCache.delete(key);
     }
   }
+}
+
+export function isDuplicateUpdate(updateId) {
+  if (!updateId) return false;
+  if (recentUpdates.has(updateId)) return true;
+  if (recentUpdates.size >= 200) {
+    const first = recentUpdates.values().next().value;
+    recentUpdates.delete(first);
+  }
+  recentUpdates.add(updateId);
+  return false;
 }
 
 export function getMemoryCache(key) {
@@ -124,6 +136,121 @@ export async function sendCooldownPlainText(chatId, key, text, cooldownMs) {
   const allowed = await checkCooldown(key, cooldownMs);
   if (!allowed) return null;
   return sendPlainText(chatId, text);
+}
+
+// Guest Tagging System
+export async function getGuestTag(chatId) {
+  const key = `guest-tag-${chatId}`;
+  return cachedKvGetJson(key, 300000, '');
+}
+
+export async function setGuestTag(chatId, tag) {
+  const key = `guest-tag-${chatId}`;
+  if (!tag) {
+    invalidateMemoryCache(key);
+    await nfd.delete(key);
+    return '';
+  }
+  await cachedKvPutJson(key, tag, {}, 300000);
+  return tag;
+}
+
+// Forum Topic Mapping System
+export async function getGuestTopicId(chatId) {
+  const key = `guest-topic-${chatId}`;
+  return cachedKvGetJson(key, 300000, null);
+}
+
+export async function setGuestTopicId(chatId, topicId) {
+  const key = `guest-topic-${chatId}`;
+  const reverseKey = `topic-guest-${topicId}`;
+  await Promise.all([
+    cachedKvPutJson(key, Number(topicId), {}, 300000),
+    cachedKvPutJson(reverseKey, String(chatId), {}, 300000),
+  ]);
+  return topicId;
+}
+
+export async function getGuestIdByTopic(topicId) {
+  const reverseKey = `topic-guest-${topicId}`;
+  return cachedKvGetJson(reverseKey, 300000, null);
+}
+
+// Guest Profiling System
+export async function trackGuestProfile(message) {
+  const chatId = String(message.chat.id);
+  const key = `profile-${chatId}`;
+  const now = Date.now();
+  const current = (await kvGetJson(key, null)) || {
+    firstSeen: now,
+    messageCount: 0,
+  };
+
+  const fromUser = message.from || {};
+  const nickname = [fromUser.first_name, fromUser.last_name].filter(Boolean).join(' ').trim();
+
+  const updated = {
+    chatId,
+    userId: String(fromUser.id || message.chat.id),
+    firstSeen: current.firstSeen || now,
+    lastSeen: now,
+    messageCount: Number(current.messageCount || 0) + 1,
+    name: nickname || current.name || '',
+    username: fromUser.username ? `@${fromUser.username}` : (current.username || ''),
+    languageCode: fromUser.language_code || current.languageCode || '',
+    chatType: message.chat?.type || current.chatType || '',
+    chatTitle: message.chat?.title || current.chatTitle || '',
+  };
+
+  setMemoryCache(key, updated, 300000);
+  await kvPutJson(key, updated, { expirationTtl: 180 * 24 * 3600 });
+  return updated;
+}
+
+export async function getGuestProfile(chatId) {
+  const key = `profile-${chatId}`;
+  return cachedKvGetJson(key, 300000, null);
+}
+
+// Quick Reply System
+export async function listQuickReplies() {
+  const cacheKey = 'quick-replies-index';
+  const cached = getMemoryCache(cacheKey);
+  if (cached) return cached;
+
+  const list = asArray(await kvGetJson('quick-replies-list', []));
+  setMemoryCache(cacheKey, list, 120000);
+  return list;
+}
+
+export async function getQuickReply(tag) {
+  const key = `quick-reply-${tag.toLowerCase()}`;
+  return cachedKvGetJson(key, 300000, null);
+}
+
+export async function setQuickReply(tag, content) {
+  const cleanTag = tag.toLowerCase().trim();
+  const key = `quick-reply-${cleanTag}`;
+  await cachedKvPutJson(key, content, {}, 300000);
+
+  const list = await listQuickReplies();
+  if (!list.includes(cleanTag)) {
+    const nextList = [...list, cleanTag];
+    await cachedKvPutJson('quick-replies-list', nextList, {}, 300000);
+    setMemoryCache('quick-replies-index', nextList, 120000);
+  }
+}
+
+export async function deleteQuickReply(tag) {
+  const cleanTag = tag.toLowerCase().trim();
+  const key = `quick-reply-${cleanTag}`;
+  invalidateMemoryCache(key);
+  await nfd.delete(key);
+
+  const list = await listQuickReplies();
+  const nextList = list.filter((t) => t !== cleanTag);
+  await cachedKvPutJson('quick-replies-list', nextList, {}, 300000);
+  setMemoryCache('quick-replies-index', nextList, 120000);
 }
 
 export async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {

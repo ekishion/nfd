@@ -1,5 +1,5 @@
 // ==============================================================================
-// src/moderation.js - Moderation Engine (Blacklist, Username, Avatar & Regex Keywords)
+// src/moderation.js - Moderation Engine (Blacklist, Flood, Dangerous Files, Avatar & Regex Keywords)
 // ==============================================================================
 
 import { getAdminUid, getKeywordViolationTtl, asArray } from './config.js';
@@ -67,6 +67,43 @@ export async function isUserBlocked(chatId) {
 
 export async function setUserBlocked(chatId, blocked) {
   return cachedKvPutJson(`isblocked-${chatId}`, blocked, {}, 60000);
+}
+
+export async function checkFloodLimit(chatId, config) {
+  if (!config.flood_protect) return { blocked: false };
+
+  const now = Date.now();
+  const muteKey = `flood-mute-${chatId}`;
+  const muteUntil = Number(getMemoryCache(muteKey) || (await nfd.get(muteKey)) || 0);
+  if (muteUntil > now) {
+    return { blocked: true, remainingSeconds: Math.ceil((muteUntil - now) / 1000) };
+  }
+
+  const windowMs = (config.flood_window_seconds || 10) * 1000;
+  const historyKey = `flood-history-${chatId}`;
+  const history = asArray(getMemoryCache(historyKey) || []);
+  const validHistory = history.filter((ts) => now - ts < windowMs);
+  validHistory.push(now);
+  setMemoryCache(historyKey, validHistory, windowMs);
+
+  if (validHistory.length > (config.flood_limit || 5)) {
+    const muteSeconds = config.flood_mute_seconds || 60;
+    const muteExpires = now + muteSeconds * 1000;
+    setMemoryCache(muteKey, muteExpires, muteSeconds * 1000);
+    await nfd.put(muteKey, String(muteExpires), { expirationTtl: muteSeconds });
+    await incrementStat('flood-blocked');
+    return { blocked: true, remainingSeconds: muteSeconds, triggeredNow: true };
+  }
+
+  return { blocked: false };
+}
+
+export function isDangerousDocument(message) {
+  const doc = message?.document;
+  if (!doc || !doc.file_name) return false;
+  const fileName = doc.file_name.toLowerCase();
+  const dangerousExts = ['.exe', '.bat', '.apk', '.cmd', '.vbs', '.ps1', '.scr', '.sh', '.jar', '.msi', '.dll', '.pif'];
+  return dangerousExts.some((ext) => fileName.endsWith(ext));
 }
 
 export async function checkUserHasPhoto(userId) {
@@ -163,8 +200,8 @@ export async function recordKeywordViolation(message, keyword) {
 export async function notifyKeywordBlocked(message, matchResult, violation, config) {
   await incrementStat('keyword-blocked');
   if (!config.notice_admin) return null;
-  const adminUid = getAdminUid();
-  if (!adminUid) return null;
+  const alertChatId = config.alert_chat_id || getAdminUid();
+  if (!alertChatId) return null;
 
   const ruleName = typeof matchResult === 'string' ? matchResult : matchResult.rule;
   const snippet = typeof matchResult === 'object' && matchResult?.snippet ? matchResult.snippet : '';
@@ -187,5 +224,6 @@ export async function notifyKeywordBlocked(message, matchResult, violation, conf
   if (config.auto_block && violation.count >= config.violation_limit) {
     lines.push(mdLine('处理', '已自动拉入黑名单'));
   }
-  return sendMarkdown(adminUid, lines.join('\n'));
+  const extra = config.alert_thread_id ? { message_thread_id: config.alert_thread_id } : {};
+  return sendMarkdown(alertChatId, lines.join('\n'), extra);
 }

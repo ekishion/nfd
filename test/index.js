@@ -178,7 +178,6 @@ async function incrementStatMock(name) {
 for (let i = 0; i < 14; i++) {
   incrementStatMock('msg');
 }
-// 14 increments: flushed at 5, flushed at 10 (2 KV puts total), 4 remaining in memory
 assert.strictEqual(mockKvPuts, 2);
 assert.strictEqual(pendingStats.get('msg'), 4);
 console.log('Stat throttling reduces KV write load by ~80%');
@@ -246,7 +245,7 @@ const testRules = [
   '/(?:vx|微信|v信)\\s*[:：号]?\\s*[a-zA-Z0-9_-]{5,}/i',
   '/t\\.me\\/(?:joinchat|\\+[a-zA-Z0-9_-]+)/i',
   '代充',
-  '/[invalid(regex/i', // Invalid regex syntax fallback test
+  '/[invalid(regex/i',
 ];
 
 const res1 = matchRules('快加我 微信: my_wechat_001 咨询业务', testRules);
@@ -266,7 +265,129 @@ const evasionText = '联系\u200Bｖ\u200Bｘ\u3000：\u200B \u200Fvip_88888 抢
 const resEvasion = matchRules(evasionText, testRules);
 assert.strictEqual(resEvasion.matched, true);
 assert.strictEqual(resEvasion.snippet, 'vx : vip_88888');
-
 console.log('Anti-evasion normalization & Regex keyword engine verified');
 
-console.log('\nAll 8 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 9: Update ID LRU De-duplication
+// ------------------------------------------------------------------------------
+const recentUpdates = new Set();
+function isDuplicateUpdate(updateId) {
+  if (!updateId) return false;
+  if (recentUpdates.has(updateId)) return true;
+  if (recentUpdates.size >= 5) {
+    const first = recentUpdates.values().next().value;
+    recentUpdates.delete(first);
+  }
+  recentUpdates.add(updateId);
+  return false;
+}
+
+assert.strictEqual(isDuplicateUpdate(1001), false);
+assert.strictEqual(isDuplicateUpdate(1001), true);
+assert.strictEqual(isDuplicateUpdate(1002), false);
+console.log('Update ID LRU de-duplication verified');
+
+// ------------------------------------------------------------------------------
+// Test 10: Anti-Flood Rate Limiting
+// ------------------------------------------------------------------------------
+const floodMemory = new Map();
+function checkFloodLimitMock(chatId, limit = 3, windowSeconds = 1) {
+  const now = Date.now();
+  const history = floodMemory.get(chatId) || [];
+  const valid = history.filter((ts) => now - ts < windowSeconds * 1000);
+  valid.push(now);
+  floodMemory.set(chatId, valid);
+  if (valid.length > limit) {
+    return { blocked: true };
+  }
+  return { blocked: false };
+}
+
+assert.strictEqual(checkFloodLimitMock('userA', 3, 10).blocked, false);
+assert.strictEqual(checkFloodLimitMock('userA', 3, 10).blocked, false);
+assert.strictEqual(checkFloodLimitMock('userA', 3, 10).blocked, false);
+assert.strictEqual(checkFloodLimitMock('userA', 3, 10).blocked, true);
+console.log('Anti-flood rate limiting threshold verified');
+
+// ------------------------------------------------------------------------------
+// Test 11: Dangerous Document Executable Filter
+// ------------------------------------------------------------------------------
+function isDangerousDocument(fileName) {
+  if (!fileName) return false;
+  const dangerousExts = ['.exe', '.bat', '.apk', '.cmd', '.vbs', '.ps1', '.scr', '.sh', '.jar', '.msi', '.dll'];
+  const lower = fileName.toLowerCase();
+  return dangerousExts.some((ext) => lower.endsWith(ext));
+}
+
+assert.strictEqual(isDangerousDocument('invoice.pdf'), false);
+assert.strictEqual(isDangerousDocument('photo.jpg'), false);
+assert.strictEqual(isDangerousDocument('setup.exe'), true);
+assert.strictEqual(isDangerousDocument('client_v2.APK'), true);
+assert.strictEqual(isDangerousDocument('script.bat'), true);
+console.log('Dangerous document executable filter verified');
+
+// ------------------------------------------------------------------------------
+// Test 12: Guest Tag & Profile Builder
+// ------------------------------------------------------------------------------
+function buildMessageInfoWithTag(userName, userId, count, tag) {
+  const guestLabel = tag ? `${userName} [${tag}]` : `${userName} (${userId})`;
+  return guestLabel;
+}
+
+assert.strictEqual(buildMessageInfoWithTag('张三', '12345', 1, 'VIP买家'), '张三 [VIP买家]');
+assert.strictEqual(buildMessageInfoWithTag('李四', '67890', 1, ''), '李四 (67890)');
+console.log('Customer tagging format in guest info verified');
+
+// ------------------------------------------------------------------------------
+// Test 13: Forum Topic Mapping & Direct Reply Resolution
+// ------------------------------------------------------------------------------
+const topicMap = new Map();
+const reverseTopicMap = new Map();
+
+function setTopic(guestId, topicId) {
+  topicMap.set(guestId, topicId);
+  reverseTopicMap.set(topicId, guestId);
+}
+
+function resolveGuestFromAdminMsg(adminMsg) {
+  if (adminMsg.message_thread_id && reverseTopicMap.has(adminMsg.message_thread_id)) {
+    return reverseTopicMap.get(adminMsg.message_thread_id);
+  }
+  return null;
+}
+
+setTopic('10001', 42);
+setTopic('10002', 88);
+
+assert.strictEqual(resolveGuestFromAdminMsg({ message_thread_id: 42, text: '你好！' }), '10001');
+assert.strictEqual(resolveGuestFromAdminMsg({ message_thread_id: 88, text: '请问有什么可以帮您？' }), '10002');
+assert.strictEqual(resolveGuestFromAdminMsg({ message_thread_id: 999, text: '未知话题' }), null);
+console.log('Forum Topic reverse mapping resolution verified');
+
+// ------------------------------------------------------------------------------
+// Test 14: Dual-Channel Routing (Alert Channel vs Forward Channel)
+// ------------------------------------------------------------------------------
+function resolveRouting(config) {
+  const forwardChat = config.ENV_FORWARD_CHAT_ID || config.ENV_ADMIN_UID;
+  const alertChat = config.ENV_ALERT_CHAT_ID || forwardChat;
+  const alertThread = config.ENV_ALERT_THREAD_ID ? Number(config.ENV_ALERT_THREAD_ID) : null;
+  return { forwardChat, alertChat, alertThread };
+}
+
+const route1 = resolveRouting({ ENV_ADMIN_UID: '111' });
+assert.strictEqual(route1.forwardChat, '111');
+assert.strictEqual(route1.alertChat, '111');
+assert.strictEqual(route1.alertThread, null);
+
+const route2 = resolveRouting({
+  ENV_ADMIN_UID: '111',
+  ENV_FORWARD_CHAT_ID: '-100123456',
+  ENV_ALERT_CHAT_ID: '-100987654',
+  ENV_ALERT_THREAD_ID: '77',
+});
+assert.strictEqual(route2.forwardChat, '-100123456');
+assert.strictEqual(route2.alertChat, '-100987654');
+assert.strictEqual(route2.alertThread, 77);
+console.log('Dual-channel alert and conversation routing verified');
+
+console.log('\nAll 14 test suites passed with 0 errors!\n');

@@ -9,9 +9,10 @@ import {
   DEFAULT_START_MESSAGE,
   getSecret,
   getAdminUid,
+  getForwardChatId,
   getStartMsgUrl,
 } from './config.js';
-import { fetchTextOrDefault } from './cache.js';
+import { fetchTextOrDefault, isDuplicateUpdate } from './cache.js';
 import { apiUrl, sendMarkdown, getCommand, formatStartMessage } from './telegram.js';
 import { handleGuestMessage } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
@@ -60,6 +61,9 @@ export async function handleWebhook(request, ctx = null) {
 
 export async function onUpdate(update) {
   try {
+    if (update.update_id && isDuplicateUpdate(update.update_id)) {
+      return;
+    }
     if (update.message) {
       await onMessage(update.message);
     } else if (update.callback_query) {
@@ -74,7 +78,12 @@ export async function onMessage(message) {
   if (!message?.chat?.id) return;
 
   const adminUid = getAdminUid();
-  const isAdmin = Boolean(adminUid && String(message.chat.id) === adminUid);
+  const forwardChatId = getForwardChatId();
+  const isAdmin = Boolean(
+    (adminUid && String(message.chat.id) === adminUid) ||
+    (forwardChatId && String(message.chat.id) === forwardChatId) ||
+    (adminUid && String(message.from?.id) === adminUid),
+  );
   const command = getCommand(message);
 
   if (command === '/start') {

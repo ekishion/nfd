@@ -9,7 +9,7 @@ import { sendMarkdown, editMessageText, deleteMessage, answerCallbackQuery, mdLi
 export function buildSettingPanel(config, page = 'moderation') {
   if (page === 'forwarding') {
     const text = [
-      '*⚙️ 人偶控制面板（2/2 转发与通知）*',
+      '*⚙️ 人偶控制面板（2/3 转发与通知）*',
       '',
       mdLine('⏱️ 转发缓冲延迟', config.delay_seconds > 0 ? `${config.delay_seconds} 秒` : '关闭 (即时转发)'),
       mdLine('📢 拦截通知管理', config.notice_admin ? '开启' : '关闭'),
@@ -31,7 +31,7 @@ export function buildSettingPanel(config, page = 'moderation') {
         ],
         [
           { text: '⬅️ 🛡️ 审查设置', callback_data: 'setting:page:moderation' },
-          { text: '⏱️ 转发与通知 (当前)', callback_data: 'setting:page:forwarding' },
+          { text: '🔒 防护离开 ➡️', callback_data: 'setting:page:defense' },
         ],
         [
           { text: '🔄 刷新状态', callback_data: 'setting:refresh:forwarding' },
@@ -42,9 +42,42 @@ export function buildSettingPanel(config, page = 'moderation') {
     return { text, keyboard };
   }
 
+  if (page === 'defense') {
+    const text = [
+      '*⚙️ 人偶控制面板（3/3 防护与离开）*',
+      '',
+      mdLine('🌊 防刷屏频控', config.flood_protect ? '开启 (10s内限5条)' : '关闭'),
+      mdLine('🛡️ 拦截危险文件', config.block_executables ? '开启 (.exe/.apk等)' : '关闭'),
+      mdLine('🌙 离开自动应答', config.away_mode ? '开启' : '关闭'),
+      '',
+      '💡 _点击下方按钮切换安全防护与离开模式喵_',
+    ].join('\n');
+
+    const keyboard = {
+      inline_keyboard: [
+        [
+          { text: `🌊 防刷频控: ${config.flood_protect ? '✅' : '❌'}`, callback_data: 'setting:toggle:flood_protect' },
+          { text: `🛡️ 危险文件: ${config.block_executables ? '✅' : '❌'}`, callback_data: 'setting:toggle:block_executables' },
+        ],
+        [
+          { text: `🌙 离开模式: ${config.away_mode ? '✅' : '❌'}`, callback_data: 'setting:toggle:away_mode' },
+        ],
+        [
+          { text: '⬅️ ⏱️ 转发通知', callback_data: 'setting:page:forwarding' },
+          { text: '🛡️ 审查设置 ➡️', callback_data: 'setting:page:moderation' },
+        ],
+        [
+          { text: '🔄 刷新状态', callback_data: 'setting:refresh:defense' },
+          { text: '❌ 关闭面板', callback_data: 'setting:close' },
+        ],
+      ],
+    };
+    return { text, keyboard };
+  }
+
   // Default Page: moderation
   const text = [
-    '*⚙️ 人偶控制面板（1/2 拦截审查）*',
+    '*⚙️ 人偶控制面板（1/3 拦截审查）*',
     '',
     mdLine('👤 要求用户名', config.req_username ? '开启' : '关闭'),
     mdLine('🖼️ 要求个人头像', config.req_photo ? '开启' : '关闭'),
@@ -65,8 +98,8 @@ export function buildSettingPanel(config, page = 'moderation') {
         { text: `🔢 阈值: ${config.violation_limit}次 ▾`, callback_data: 'setting:cycle:violation_limit' },
       ],
       [
-        { text: '🛡️ 审查设置 (当前)', callback_data: 'setting:page:moderation' },
         { text: '⏱️ 转发与通知 ➡️', callback_data: 'setting:page:forwarding' },
+        { text: '🔒 防护与离开 ➡️', callback_data: 'setting:page:defense' },
       ],
       [
         { text: '🔄 刷新状态', callback_data: 'setting:refresh:moderation' },
@@ -83,8 +116,10 @@ export async function sendSettingPanel(chatId, page = 'moderation') {
   return sendMarkdown(chatId, text, { reply_markup: keyboard });
 }
 
-export async function handleSettingCallback(callbackQuery, data, messageId) {
+export async function handleSettingCallback(callbackQuery) {
   const adminUid = getAdminUid();
+  const data = callbackQuery.data || '';
+  const messageId = callbackQuery.message?.message_id;
   const parts = data.split(':');
   const action = parts[1]; // 'page', 'toggle', 'cycle', 'refresh', 'close'
   const key = parts[2];
@@ -101,7 +136,7 @@ export async function handleSettingCallback(callbackQuery, data, messageId) {
 
   if (action === 'page') {
     currentPage = key || 'moderation';
-    toast = currentPage === 'forwarding' ? '已切换至 转发与通知' : '已切换至 拦截审查';
+    toast = `已切换至 ${currentPage === 'forwarding' ? '转发与通知' : currentPage === 'defense' ? '防护与离开' : '拦截审查'}`;
   } else if (action === 'refresh') {
     currentPage = key || 'moderation';
     invalidateMemoryCache('runtime-config');
@@ -110,7 +145,13 @@ export async function handleSettingCallback(callbackQuery, data, messageId) {
     const config = await getRuntimeConfig();
     const nextVal = !config[key];
     await updateRuntimeConfig({ [key]: nextVal });
-    currentPage = ['delay_seconds', 'notice_admin', 'notice_user', 'enable_notify'].includes(key) ? 'forwarding' : 'moderation';
+    if (['delay_seconds', 'notice_admin', 'notice_user', 'enable_notify'].includes(key)) {
+      currentPage = 'forwarding';
+    } else if (['flood_protect', 'block_executables', 'away_mode'].includes(key)) {
+      currentPage = 'defense';
+    } else {
+      currentPage = 'moderation';
+    }
     toast = `已${nextVal ? '开启' : '关闭'}`;
   } else if (action === 'cycle') {
     const config = await getRuntimeConfig();
