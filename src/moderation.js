@@ -10,6 +10,8 @@ import {
   setMemoryCache,
   kvGetJson,
   kvPutJson,
+  kvGetText,
+  kvPutText,
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
@@ -74,7 +76,7 @@ export async function checkFloodLimit(chatId, config) {
 
   const now = Date.now();
   const muteKey = `flood-mute-${chatId}`;
-  const muteUntil = Number(getMemoryCache(muteKey) || (await nfd.get(muteKey)) || 0);
+  const muteUntil = Number(getMemoryCache(muteKey) || (await kvGetText(muteKey, '0')) || 0);
   if (muteUntil > now) {
     return { blocked: true, remainingSeconds: Math.ceil((muteUntil - now) / 1000) };
   }
@@ -90,7 +92,7 @@ export async function checkFloodLimit(chatId, config) {
     const muteSeconds = config.flood_mute_seconds || 60;
     const muteExpires = now + muteSeconds * 1000;
     setMemoryCache(muteKey, muteExpires, muteSeconds * 1000);
-    await nfd.put(muteKey, String(muteExpires), { expirationTtl: muteSeconds });
+    await kvPutText(muteKey, String(muteExpires), { expirationTtl: muteSeconds });
     await incrementStat('flood-blocked');
     return { blocked: true, remainingSeconds: muteSeconds, triggeredNow: true };
   }
@@ -139,9 +141,9 @@ export async function getKeywordRules() {
   const cached = getMemoryCache(cacheKey);
   if (cached) return cached;
 
-  const fromKv = await cachedKvGetJson('blocked-keywords', 120000, []);
+  const fromKv = await cachedKvGetJson('keyword-rules', 120000, []);
   const fromDb = await fetchKeywordDb();
-  const rawList = Array.from(new Set([...fromDb, ...asArray(fromKv)]));
+  const rawList = Array.from(new Set([...asArray(fromDb), ...asArray(fromKv)]));
 
   const parsedRules = rawList.map(parseKeywordRule).filter(Boolean);
   setMemoryCache(cacheKey, parsedRules, 60000);

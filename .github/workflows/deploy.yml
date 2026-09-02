@@ -1,0 +1,83 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run Test Suite & Build
+        run: |
+          npm test
+          node build.js
+
+      - name: Generate Dynamic Wrangler Config
+        run: |
+          node -e '
+          const fs = require("fs");
+          const config = {
+            name: "nfd",
+            main: "worker.js",
+            compatibility_date: "2024-09-01",
+            kv_namespaces: [
+              {
+                binding: "nfd",
+                id: process.env.KV_NAMESPACE_ID || ""
+              }
+            ],
+            vars: {
+              ENV_BOT_TOKEN: process.env.ENV_BOT_TOKEN || "",
+              ENV_BOT_SECRET: process.env.ENV_BOT_SECRET || "",
+              ENV_ADMIN_UID: process.env.ENV_ADMIN_UID || "",
+              ENV_FORWARD_CHAT_ID: process.env.ENV_FORWARD_CHAT_ID || "",
+              ENV_FORWARD_THREAD_ID: process.env.ENV_FORWARD_THREAD_ID || "",
+              ENV_ALERT_CHAT_ID: process.env.ENV_ALERT_CHAT_ID || "",
+              ENV_ALERT_THREAD_ID: process.env.ENV_ALERT_THREAD_ID || "",
+              ENV_ENABLE_FORUM_TOPICS: process.env.ENV_ENABLE_FORUM_TOPICS || "",
+              ENV_FRAUD_DB_URL: process.env.ENV_FRAUD_DB_URL || "",
+              ENV_KEYWORD_DB_URL: process.env.ENV_KEYWORD_DB_URL || "",
+              ENV_START_MESSAGE_URL: process.env.ENV_START_MESSAGE_URL || "",
+              ENV_NOTIFICATION_URL: process.env.ENV_NOTIFICATION_URL || ""
+            }
+          };
+          for (const [k, v] of Object.entries(config.vars)) {
+            if (!v) {
+              delete config.vars[k];
+            }
+          }
+          fs.writeFileSync("wrangler.json", JSON.stringify(config, null, 2));
+          '
+        env:
+          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
+          ENV_BOT_TOKEN: ${{ secrets.ENV_BOT_TOKEN }}
+          ENV_BOT_SECRET: ${{ secrets.ENV_BOT_SECRET }}
+          ENV_ADMIN_UID: ${{ secrets.ENV_ADMIN_UID }}
+          ENV_FORWARD_CHAT_ID: ${{ secrets.ENV_FORWARD_CHAT_ID }}
+          ENV_FORWARD_THREAD_ID: ${{ secrets.ENV_FORWARD_THREAD_ID }}
+          ENV_ALERT_CHAT_ID: ${{ secrets.ENV_ALERT_CHAT_ID }}
+          ENV_ALERT_THREAD_ID: ${{ secrets.ENV_ALERT_THREAD_ID }}
+          ENV_ENABLE_FORUM_TOPICS: ${{ secrets.ENV_ENABLE_FORUM_TOPICS }}
+          ENV_FRAUD_DB_URL: ${{ secrets.ENV_FRAUD_DB_URL }}
+          ENV_KEYWORD_DB_URL: ${{ secrets.ENV_KEYWORD_DB_URL }}
+          ENV_START_MESSAGE_URL: ${{ secrets.ENV_START_MESSAGE_URL }}
+          ENV_NOTIFICATION_URL: ${{ secrets.ENV_NOTIFICATION_URL }}
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
+          command: deploy

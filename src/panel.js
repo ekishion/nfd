@@ -20,10 +20,10 @@ export function buildSettingPanel(config, page = 'moderation') {
   const isDefense = page === 'defense';
 
   const title = isModeration
-    ? '⚙️ *控制面板 \\- 拦截审查设置* (1/3)'
+    ? '⚙️ *控制面板 \\- 拦截审查设置* \\(1/3\\)'
     : isForwarding
-      ? '⚙️ *控制面板 \\- 转发与通知设置* (2/3)'
-      : '⚙️ *控制面板 \\- 防护与离开设置* (3/3)';
+      ? '⚙️ *控制面板 \\- 转发与通知设置* \\(2/3\\)'
+      : '⚙️ *控制面板 \\- 防护与离开设置* \\(3/3\\)';
 
   const lines = [title, ''];
 
@@ -48,9 +48,9 @@ export function buildSettingPanel(config, page = 'moderation') {
     );
   } else {
     lines.push(
-      `• *短时防刷屏频控:* ${config.flood_protect ? '✅ 已开启 (10s/5条)' : '❌ 已关闭'}`,
+      `• *短时防刷屏频控:* ${config.flood_protect ? '✅ 已开启 \\(10s/5条\\)' : '❌ 已关闭'}`,
       `• *拦截危险安装包/可执行文件:* ${config.block_executables ? '✅ 已开启' : '❌ 已关闭'}`,
-      `• *离开模式 (自动应答):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开模式 \\(自动应答\\):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
       `• *离开提示文案:* \`${(config.away_message || '外出中').slice(0, 30)}\``,
       '',
       '_点击下方按钮可快速切换防护或离开模式：_',

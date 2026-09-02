@@ -99,20 +99,20 @@ export const ADMIN_COMMANDS = new Set([
 export const DEFAULT_START_MESSAGE = typeof defaultStartMessage === 'string' && defaultStartMessage
   ? defaultStartMessage.trim()
   : [
-      '👋🏻 您好 {username}，这里是人偶，需要留言吗！',
+      '您好 {username}，这里是人偶。',
       '',
-      '⬇️ __请在下方输入框发送消息__（或发送媒体），我帮你转达喵',
+      '请在下方直接发送文字、图片或文件，我会帮您转达给管理人。',
     ].join('\n');
 
 export const DEFAULT_NOTIFICATION = typeof defaultNotification === 'string' && defaultNotification
   ? defaultNotification.trim()
   : [
-      '*人偶小提醒*',
+      '*交易安全提醒*',
       '',
-      '1\\. 交易前请确认对方在 NodeSeek 的身份。',
-      '2\\. 付款或交付前，尽量确认商品、账号或服务确实存在。',
-      '3\\. 大额交易建议走论坛中介，人偶会比较安心。',
-      '4\\. 如果感觉不对劲，请及时到论坛或群组反馈喵。',
+      '1\\. 交易前请核实对方在论坛的身份与信用记录。',
+      '2\\. 付款或交付前，请确认商品、账号或服务真实可用。',
+      '3\\. 涉及较大金额建议使用中介担保。',
+      '4\\. 如遇可疑情况，请及时在群内或论坛反馈。',
     ].join('\n');
 
 export function getDefaultEnvConfig() {

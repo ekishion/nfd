@@ -8,8 +8,8 @@
 // src/config.js - Configuration, Constants & Dynamic Environment Accessors
 // ==============================================================================
 
-const defaultStartMessage = "👋🏻 您好 {username}，这里是人偶，需要留言吗！\n\n⬇️ __请在下方输入框发送消息__（或发送媒体），我帮你转达喵";
-const defaultNotification = "*人偶小提醒*\n\n1\\. 交易前请确认对方在 NodeSeek 的身份。\n2\\. 付款或交付前，尽量确认商品、账号或服务确实存在。\n3\\. 大额交易建议走论坛中介，人偶会比较安心。\n4\\. 如果感觉不对劲，请及时到论坛或群组反馈喵。";
+const defaultStartMessage = "您好 {username}，这里是人偶。\n\n请在下方直接发送文字、图片或文件，我会帮您转达给管理人。";
+const defaultNotification = "*交易安全提醒*\n\n1\\. 交易前请核实对方在论坛的身份与信用记录。\n2\\. 付款或交付前，请确认商品、账号或服务真实可用。\n3\\. 涉及较大金额建议使用中介担保。\n4\\. 如遇可疑情况，请及时在群内或论坛反馈。";
 const WEBHOOK = '/endpoint';
 const PARSE_MODE = 'MarkdownV2';
 const NOTIFY_INTERVAL = 3600 * 1000;
@@ -87,19 +87,19 @@ const ADMIN_COMMANDS = new Set([
 const DEFAULT_START_MESSAGE = typeof defaultStartMessage === 'string' && defaultStartMessage
   ? defaultStartMessage.trim()
   : [
-      '👋🏻 您好 {username}，这里是人偶，需要留言吗！',
+      '您好 {username}，这里是人偶。',
       '',
-      '⬇️ __请在下方输入框发送消息__（或发送媒体），我帮你转达喵',
+      '请在下方直接发送文字、图片或文件，我会帮您转达给管理人。',
     ].join('\n');
 const DEFAULT_NOTIFICATION = typeof defaultNotification === 'string' && defaultNotification
   ? defaultNotification.trim()
   : [
-      '*人偶小提醒*',
+      '*交易安全提醒*',
       '',
-      '1\\. 交易前请确认对方在 NodeSeek 的身份。',
-      '2\\. 付款或交付前，尽量确认商品、账号或服务确实存在。',
-      '3\\. 大额交易建议走论坛中介，人偶会比较安心。',
-      '4\\. 如果感觉不对劲，请及时到论坛或群组反馈喵。',
+      '1\\. 交易前请核实对方在论坛的身份与信用记录。',
+      '2\\. 付款或交付前，请确认商品、账号或服务真实可用。',
+      '3\\. 涉及较大金额建议使用中介担保。',
+      '4\\. 如遇可疑情况，请及时在群内或论坛反馈。',
     ].join('\n');
 function getDefaultEnvConfig() {
   return {
@@ -182,12 +182,57 @@ function setMemoryCache(key, value, ttlMs = 60000) {
 function invalidateMemoryCache(key) {
   memoryCache.delete(key);
 }
+function getKv() {
+  return typeof nfd !== 'undefined' ? nfd : null;
+}
+async function kvGetText(key, fallback = '') {
+  const kv = getKv();
+  if (!kv) return fallback;
+  try {
+    const val = await kv.get(key);
+    return val !== null && val !== undefined ? val : fallback;
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvGetText-failed', key, message: err.message }));
+    return fallback;
+  }
+}
+async function kvPutText(key, value, options = {}) {
+  const kv = getKv();
+  if (!kv) return;
+  try {
+    await kv.put(key, String(value), options);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvPutText-failed', key, message: err.message }));
+  }
+}
+async function kvDelete(key) {
+  const kv = getKv();
+  if (!kv) return;
+  try {
+    await kv.delete(key);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvDelete-failed', key, message: err.message }));
+  }
+}
 async function kvGetJson(key, fallback = null) {
-  const value = await nfd.get(key, { type: 'json' });
-  return value === null || value === undefined ? fallback : value;
+  const kv = getKv();
+  if (!kv) return fallback;
+  try {
+    const value = await kv.get(key, { type: 'json' });
+    return value === null || value === undefined ? fallback : value;
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvGetJson-failed', key, message: err.message }));
+    return fallback;
+  }
 }
 async function kvPutJson(key, value, options = {}) {
-  return nfd.put(key, JSON.stringify(value), options);
+  const kv = getKv();
+  if (!kv) return;
+  try {
+    return await kv.put(key, JSON.stringify(value), options);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvPutJson-failed', key, message: err.message }));
+  }
 }
 async function cachedKvGetJson(key, ttlMs = 60000, fallback = null) {
   const mem = getMemoryCache(key);
@@ -226,15 +271,15 @@ async function incrementStat(name) {
   if (count >= 5) {
     pendingStats.delete(name);
     const key = `stat-${name}`;
-    const current = Number((await nfd.get(key)) || 0);
-    await nfd.put(key, String(current + count));
+    const current = Number((await kvGetText(key, '0')) || 0);
+    await kvPutText(key, String(current + count));
   } else {
     pendingStats.set(name, count);
   }
 }
 async function getStatCount(name) {
   const key = `stat-${name}`;
-  const fromKv = Number((await nfd.get(key)) || 0);
+  const fromKv = Number((await kvGetText(key, '0')) || 0);
   const fromMem = Number(pendingStats.get(name) || 0);
   return fromKv + fromMem;
 }
@@ -243,14 +288,14 @@ async function checkCooldown(key, cooldownMs) {
   const mem = getMemoryCache(`cd-${key}`);
   if (mem && now - mem < cooldownMs) return false;
 
-  const lastSentAt = Number((await nfd.get(key)) || 0);
+  const lastSentAt = Number((await kvGetText(key, '0')) || 0);
   if (lastSentAt && now - lastSentAt < cooldownMs) {
     setMemoryCache(`cd-${key}`, lastSentAt, cooldownMs);
     return false;
   }
 
   setMemoryCache(`cd-${key}`, now, cooldownMs);
-  await nfd.put(key, String(now));
+  await kvPutText(key, String(now));
   return true;
 }
 async function sendCooldownPlainText(chatId, key, text, cooldownMs) {
@@ -268,7 +313,7 @@ async function setGuestTag(chatId, tag) {
   const key = `guest-tag-${chatId}`;
   if (!tag) {
     invalidateMemoryCache(key);
-    await nfd.delete(key);
+    await kvDelete(key);
     return '';
   }
   await cachedKvPutJson(key, tag, {}, 300000);
@@ -359,7 +404,7 @@ async function deleteQuickReply(tag) {
   const cleanTag = tag.toLowerCase().trim();
   const key = `quick-reply-${cleanTag}`;
   invalidateMemoryCache(key);
-  await nfd.delete(key);
+  await kvDelete(key);
 
   const list = await listQuickReplies();
   const nextList = list.filter((t) => t !== cleanTag);
@@ -616,6 +661,8 @@ import {
   setMemoryCache,
   kvGetJson,
   kvPutJson,
+  kvGetText,
+  kvPutText,
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
@@ -674,7 +721,7 @@ async function checkFloodLimit(chatId, config) {
 
   const now = Date.now();
   const muteKey = `flood-mute-${chatId}`;
-  const muteUntil = Number(getMemoryCache(muteKey) || (await nfd.get(muteKey)) || 0);
+  const muteUntil = Number(getMemoryCache(muteKey) || (await kvGetText(muteKey, '0')) || 0);
   if (muteUntil > now) {
     return { blocked: true, remainingSeconds: Math.ceil((muteUntil - now) / 1000) };
   }
@@ -690,7 +737,7 @@ async function checkFloodLimit(chatId, config) {
     const muteSeconds = config.flood_mute_seconds || 60;
     const muteExpires = now + muteSeconds * 1000;
     setMemoryCache(muteKey, muteExpires, muteSeconds * 1000);
-    await nfd.put(muteKey, String(muteExpires), { expirationTtl: muteSeconds });
+    await kvPutText(muteKey, String(muteExpires), { expirationTtl: muteSeconds });
     await incrementStat('flood-blocked');
     return { blocked: true, remainingSeconds: muteSeconds, triggeredNow: true };
   }
@@ -736,9 +783,9 @@ async function getKeywordRules() {
   const cached = getMemoryCache(cacheKey);
   if (cached) return cached;
 
-  const fromKv = await cachedKvGetJson('blocked-keywords', 120000, []);
+  const fromKv = await cachedKvGetJson('keyword-rules', 120000, []);
   const fromDb = await fetchKeywordDb();
-  const rawList = Array.from(new Set([...fromDb, ...asArray(fromKv)]));
+  const rawList = Array.from(new Set([...asArray(fromDb), ...asArray(fromKv)]));
 
   const parsedRules = rawList.map(parseKeywordRule).filter(Boolean);
   setMemoryCache(cacheKey, parsedRules, 60000);
@@ -845,6 +892,8 @@ import {
   setMemoryCache,
   kvGetJson,
   kvPutJson,
+  kvGetText,
+  kvPutText,
   getRuntimeConfig,
   incrementStat,
   sendCooldownPlainText,
@@ -1160,9 +1209,9 @@ async function handleNotify(message, config = null) {
 
   if (!config.enable_notify) return;
 
-  const lastMsgTime = await kvGetJson(`lastmsg-${chatId}`, 0);
-  if (!lastMsgTime || Date.now() - Number(lastMsgTime) > NOTIFY_INTERVAL) {
-    await nfd.put(`lastmsg-${chatId}`, String(Date.now()));
+  const lastMsgTime = Number(await kvGetText(`lastmsg-${chatId}`, '0'));
+  if (!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL) {
+    await kvPutText(`lastmsg-${chatId}`, String(Date.now()));
     const notification = await fetchTextOrDefault(getNotificationUrl(), DEFAULT_NOTIFICATION);
     return sendMarkdown(alertChatId, notification, extra);
   }
@@ -1190,10 +1239,10 @@ function buildSettingPanel(config, page = 'moderation') {
   const isDefense = page === 'defense';
 
   const title = isModeration
-    ? '⚙️ *控制面板 \\- 拦截审查设置* (1/3)'
+    ? '⚙️ *控制面板 \\- 拦截审查设置* \\(1/3\\)'
     : isForwarding
-      ? '⚙️ *控制面板 \\- 转发与通知设置* (2/3)'
-      : '⚙️ *控制面板 \\- 防护与离开设置* (3/3)';
+      ? '⚙️ *控制面板 \\- 转发与通知设置* \\(2/3\\)'
+      : '⚙️ *控制面板 \\- 防护与离开设置* \\(3/3\\)';
 
   const lines = [title, ''];
 
@@ -1218,9 +1267,9 @@ function buildSettingPanel(config, page = 'moderation') {
     );
   } else {
     lines.push(
-      `• *短时防刷屏频控:* ${config.flood_protect ? '✅ 已开启 (10s/5条)' : '❌ 已关闭'}`,
+      `• *短时防刷屏频控:* ${config.flood_protect ? '✅ 已开启 \\(10s/5条\\)' : '❌ 已关闭'}`,
       `• *拦截危险安装包/可执行文件:* ${config.block_executables ? '✅ 已开启' : '❌ 已关闭'}`,
-      `• *离开模式 (自动应答):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开模式 \\(自动应答\\):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
       `• *离开提示文案:* \`${(config.away_message || '外出中').slice(0, 30)}\``,
       '',
       '_点击下方按钮可快速切换防护或离开模式：_',
@@ -1951,7 +2000,7 @@ async function listKeywords(chatId, extra = {}) {
   if (!rules.length) {
     return sendMarkdown(chatId, '目前还没有配置敏感词屏蔽规则喵。', extra);
   }
-  const lines = rules.map((k) => `\\- \`${escapeMarkdown(k)}\``);
+  const lines = rules.map((k) => `\\- \`${escapeMarkdown(k.raw || k)}\``);
   return sendMarkdown(chatId, ['*当前生效的拦截规则清单*', ...lines].join('\n'), extra);
 }
 async function addKeyword(message) {
@@ -1974,13 +2023,14 @@ async function addKeyword(message) {
     }
   }
 
-  const current = await getKeywordRules();
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
   if (current.includes(rawArg)) {
     return sendMarkdown(chatId, escapeMarkdown(`规则「${rawArg}」已经在清单里了喵`), extra);
   }
 
   const updated = [...current, rawArg];
   await cachedKvPutJson('keyword-rules', updated, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(chatId, escapeMarkdown(`已成功添加拦截规则「${rawArg}」喵！`), extra);
 }
 async function deleteKeyword(message) {
@@ -1992,14 +2042,15 @@ async function deleteKeyword(message) {
     return sendMarkdown(chatId, '用法：`/delkeyword 规则名称`', extra);
   }
 
-  const current = await getKeywordRules();
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
   const index = current.indexOf(rawArg);
   if (index === -1) {
-    return sendMarkdown(chatId, escapeMarkdown(`在清单里没有找到规则「${rawArg}」喵`), extra);
+    return sendMarkdown(chatId, escapeMarkdown(`在自定义清单里没有找到规则「${rawArg}」喵`), extra);
   }
 
   current.splice(index, 1);
   await cachedKvPutJson('keyword-rules', current, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(chatId, escapeMarkdown(`已将规则「${rawArg}」从清单中移除喵`), extra);
 }
 async function syncKeywordDb(chatId, extra = {}) {
@@ -2008,9 +2059,10 @@ async function syncKeywordDb(chatId, extra = {}) {
   if (!remote || !remote.length) {
     return sendMarkdown(chatId, '未能从远程数据库获取到关键词规则喵。', extra);
   }
-  const current = await getKeywordRules();
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
   const merged = Array.from(new Set([...current, ...remote]));
   await cachedKvPutJson('keyword-rules', merged, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(chatId, escapeMarkdown(`已完成同步，当前共有 ${merged.length} 条拦截规则生效喵！`), extra);
 }
 
@@ -2041,14 +2093,14 @@ async function handleFetch(request, env = null, ctx = null) {
     return handleWebhook(request, ctx);
   } else if (url.pathname === '/registerWebhook') {
     const providedSecret = url.searchParams.get('secret') || request.headers.get('X-Telegram-Bot-Api-Secret-Token') || request.headers.get('x-secret');
-    if (secret && providedSecret !== secret) {
-      return new Response('Unauthorized: Secret mismatch', { status: 403 });
+    if (!secret || providedSecret !== secret) {
+      return new Response('Unauthorized: Secret required and mismatch', { status: 403 });
     }
     return registerWebhook(url);
   } else if (url.pathname === '/unRegisterWebhook') {
     const providedSecret = url.searchParams.get('secret') || request.headers.get('X-Telegram-Bot-Api-Secret-Token') || request.headers.get('x-secret');
-    if (secret && providedSecret !== secret) {
-      return new Response('Unauthorized: Secret mismatch', { status: 403 });
+    if (!secret || providedSecret !== secret) {
+      return new Response('Unauthorized: Secret required and mismatch', { status: 403 });
     }
     return unRegisterWebhook();
   } else {
@@ -2092,39 +2144,48 @@ async function onMessage(message) {
 
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
-  const isAdmin = Boolean(
-    (adminUid && String(message.chat.id) === adminUid) ||
-    (forwardChatId && String(message.chat.id) === forwardChatId) ||
-    (adminUid && String(message.from?.id) === adminUid),
-  );
+  const isSenderAdmin = Boolean(adminUid && String(message.from?.id) === adminUid);
+  const isPrivateAdminChat = Boolean(adminUid && String(message.chat.id) === adminUid);
+  const isForwardChat = Boolean(forwardChatId && String(message.chat.id) === forwardChatId);
 
   // Group / Supergroup / Channel processing
   if (isGroup) {
-    if (!isAdmin) {
-      return; // Regular chatter by other group members - ignore
+    // Only process inside authorized forward chat or by admin sender
+    if (!isForwardChat && !isSenderAdmin) {
+      return;
     }
+
     if (command === '/start') {
-      return sendMarkdown(
-        message.chat.id,
-        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
-        message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
-      );
+      if (isSenderAdmin) {
+        return sendMarkdown(
+          message.chat.id,
+          '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+          message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
+        );
+      }
+      return;
     }
+
     if (command) {
+      // Management commands restricted to admin sender
+      if (ADMIN_COMMANDS.has(command) && !isSenderAdmin) {
+        return;
+      }
       return handleAdminMessage(message, command);
     }
+
     // Check if replying to a guest or typing inside a guest forum topic
     const guestChatId = await getMappedGuestId(message);
     if (guestChatId) {
       return handleAdminMessage(message, '');
     }
-    // Regular group chatter, talking to other users, or @ other bots - silently ignore!
+    // Regular group chatter or mentions - silently ignore
     return;
   }
 
   // Private chat processing
   if (command === '/start') {
-    if (isAdmin) {
+    if (isPrivateAdminChat || isSenderAdmin) {
       return sendMarkdown(
         message.chat.id,
         '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
@@ -2134,7 +2195,7 @@ async function onMessage(message) {
     return sendMarkdown(message.chat.id, formatStartMessage(startMsg, message.from || {}));
   }
 
-  if (isAdmin) {
+  if (isPrivateAdminChat || isSenderAdmin) {
     return handleAdminMessage(message, command);
   }
 

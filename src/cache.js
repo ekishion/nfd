@@ -2,7 +2,7 @@
 // src/cache.js - Memory TTL Cache, KV Wrapper & Remote DB Management
 // ==============================================================================
 
-import { FRAUD_CACHE_TTL, getFraudDbUrl, getKeywordDbUrl, getDefaultEnvConfig, asArray } from './config.js';
+import { FRAUD_CACHE_TTL, getFraudDbUrl, getKeywordDbUrl, getDefaultEnvConfig, getToken, asArray } from './config.js';
 import { sendPlainText } from './telegram.js';
 
 export const memoryCache = new Map();
@@ -53,13 +53,62 @@ export function invalidateMemoryCache(key) {
   memoryCache.delete(key);
 }
 
+export function getKv() {
+  return typeof nfd !== 'undefined' ? nfd : null;
+}
+
+export async function kvGetText(key, fallback = '') {
+  const kv = getKv();
+  if (!kv) return fallback;
+  try {
+    const val = await kv.get(key);
+    return val !== null && val !== undefined ? val : fallback;
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvGetText-failed', key, message: err.message }));
+    return fallback;
+  }
+}
+
+export async function kvPutText(key, value, options = {}) {
+  const kv = getKv();
+  if (!kv) return;
+  try {
+    await kv.put(key, String(value), options);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvPutText-failed', key, message: err.message }));
+  }
+}
+
+export async function kvDelete(key) {
+  const kv = getKv();
+  if (!kv) return;
+  try {
+    await kv.delete(key);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvDelete-failed', key, message: err.message }));
+  }
+}
+
 export async function kvGetJson(key, fallback = null) {
-  const value = await nfd.get(key, { type: 'json' });
-  return value === null || value === undefined ? fallback : value;
+  const kv = getKv();
+  if (!kv) return fallback;
+  try {
+    const value = await kv.get(key, { type: 'json' });
+    return value === null || value === undefined ? fallback : value;
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvGetJson-failed', key, message: err.message }));
+    return fallback;
+  }
 }
 
 export async function kvPutJson(key, value, options = {}) {
-  return nfd.put(key, JSON.stringify(value), options);
+  const kv = getKv();
+  if (!kv) return;
+  try {
+    return await kv.put(key, JSON.stringify(value), options);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvPutJson-failed', key, message: err.message }));
+  }
 }
 
 export async function cachedKvGetJson(key, ttlMs = 60000, fallback = null) {
@@ -102,8 +151,8 @@ export async function incrementStat(name) {
   if (count >= 5) {
     pendingStats.delete(name);
     const key = `stat-${name}`;
-    const current = Number((await nfd.get(key)) || 0);
-    await nfd.put(key, String(current + count));
+    const current = Number((await kvGetText(key, '0')) || 0);
+    await kvPutText(key, String(current + count));
   } else {
     pendingStats.set(name, count);
   }
@@ -111,7 +160,7 @@ export async function incrementStat(name) {
 
 export async function getStatCount(name) {
   const key = `stat-${name}`;
-  const fromKv = Number((await nfd.get(key)) || 0);
+  const fromKv = Number((await kvGetText(key, '0')) || 0);
   const fromMem = Number(pendingStats.get(name) || 0);
   return fromKv + fromMem;
 }
@@ -121,14 +170,14 @@ export async function checkCooldown(key, cooldownMs) {
   const mem = getMemoryCache(`cd-${key}`);
   if (mem && now - mem < cooldownMs) return false;
 
-  const lastSentAt = Number((await nfd.get(key)) || 0);
+  const lastSentAt = Number((await kvGetText(key, '0')) || 0);
   if (lastSentAt && now - lastSentAt < cooldownMs) {
     setMemoryCache(`cd-${key}`, lastSentAt, cooldownMs);
     return false;
   }
 
   setMemoryCache(`cd-${key}`, now, cooldownMs);
-  await nfd.put(key, String(now));
+  await kvPutText(key, String(now));
   return true;
 }
 
@@ -148,7 +197,7 @@ export async function setGuestTag(chatId, tag) {
   const key = `guest-tag-${chatId}`;
   if (!tag) {
     invalidateMemoryCache(key);
-    await nfd.delete(key);
+    await kvDelete(key);
     return '';
   }
   await cachedKvPutJson(key, tag, {}, 300000);
@@ -245,7 +294,7 @@ export async function deleteQuickReply(tag) {
   const cleanTag = tag.toLowerCase().trim();
   const key = `quick-reply-${cleanTag}`;
   invalidateMemoryCache(key);
-  await nfd.delete(key);
+  await kvDelete(key);
 
   const list = await listQuickReplies();
   const nextList = list.filter((t) => t !== cleanTag);

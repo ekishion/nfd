@@ -29,14 +29,14 @@ export async function handleFetch(request, env = null, ctx = null) {
     return handleWebhook(request, ctx);
   } else if (url.pathname === '/registerWebhook') {
     const providedSecret = url.searchParams.get('secret') || request.headers.get('X-Telegram-Bot-Api-Secret-Token') || request.headers.get('x-secret');
-    if (secret && providedSecret !== secret) {
-      return new Response('Unauthorized: Secret mismatch', { status: 403 });
+    if (!secret || providedSecret !== secret) {
+      return new Response('Unauthorized: Secret required and mismatch', { status: 403 });
     }
     return registerWebhook(url);
   } else if (url.pathname === '/unRegisterWebhook') {
     const providedSecret = url.searchParams.get('secret') || request.headers.get('X-Telegram-Bot-Api-Secret-Token') || request.headers.get('x-secret');
-    if (secret && providedSecret !== secret) {
-      return new Response('Unauthorized: Secret mismatch', { status: 403 });
+    if (!secret || providedSecret !== secret) {
+      return new Response('Unauthorized: Secret required and mismatch', { status: 403 });
     }
     return unRegisterWebhook();
   } else {
@@ -83,39 +83,48 @@ export async function onMessage(message) {
 
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
-  const isAdmin = Boolean(
-    (adminUid && String(message.chat.id) === adminUid) ||
-    (forwardChatId && String(message.chat.id) === forwardChatId) ||
-    (adminUid && String(message.from?.id) === adminUid),
-  );
+  const isSenderAdmin = Boolean(adminUid && String(message.from?.id) === adminUid);
+  const isPrivateAdminChat = Boolean(adminUid && String(message.chat.id) === adminUid);
+  const isForwardChat = Boolean(forwardChatId && String(message.chat.id) === forwardChatId);
 
   // Group / Supergroup / Channel processing
   if (isGroup) {
-    if (!isAdmin) {
-      return; // Regular chatter by other group members - ignore
+    // Only process inside authorized forward chat or by admin sender
+    if (!isForwardChat && !isSenderAdmin) {
+      return;
     }
+
     if (command === '/start') {
-      return sendMarkdown(
-        message.chat.id,
-        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
-        message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
-      );
+      if (isSenderAdmin) {
+        return sendMarkdown(
+          message.chat.id,
+          '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+          message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
+        );
+      }
+      return;
     }
+
     if (command) {
+      // Management commands restricted to admin sender
+      if (ADMIN_COMMANDS.has(command) && !isSenderAdmin) {
+        return;
+      }
       return handleAdminMessage(message, command);
     }
+
     // Check if replying to a guest or typing inside a guest forum topic
     const guestChatId = await getMappedGuestId(message);
     if (guestChatId) {
       return handleAdminMessage(message, '');
     }
-    // Regular group chatter, talking to other users, or @ other bots - silently ignore!
+    // Regular group chatter or mentions - silently ignore
     return;
   }
 
   // Private chat processing
   if (command === '/start') {
-    if (isAdmin) {
+    if (isPrivateAdminChat || isSenderAdmin) {
       return sendMarkdown(
         message.chat.id,
         '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
@@ -125,7 +134,7 @@ export async function onMessage(message) {
     return sendMarkdown(message.chat.id, formatStartMessage(startMsg, message.from || {}));
   }
 
-  if (isAdmin) {
+  if (isPrivateAdminChat || isSenderAdmin) {
     return handleAdminMessage(message, command);
   }
 

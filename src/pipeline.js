@@ -20,6 +20,8 @@ import {
   setMemoryCache,
   kvGetJson,
   kvPutJson,
+  kvGetText,
+  kvPutText,
   getRuntimeConfig,
   incrementStat,
   sendCooldownPlainText,
@@ -342,9 +344,9 @@ export async function handleNotify(message, config = null) {
 
   if (!config.enable_notify) return;
 
-  const lastMsgTime = await kvGetJson(`lastmsg-${chatId}`, 0);
-  if (!lastMsgTime || Date.now() - Number(lastMsgTime) > NOTIFY_INTERVAL) {
-    await nfd.put(`lastmsg-${chatId}`, String(Date.now()));
+  const lastMsgTime = Number(await kvGetText(`lastmsg-${chatId}`, '0'));
+  if (!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL) {
+    await kvPutText(`lastmsg-${chatId}`, String(Date.now()));
     const notification = await fetchTextOrDefault(getNotificationUrl(), DEFAULT_NOTIFICATION);
     return sendMarkdown(alertChatId, notification, extra);
   }

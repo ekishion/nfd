@@ -580,7 +580,7 @@ export async function listKeywords(chatId, extra = {}) {
   if (!rules.length) {
     return sendMarkdown(chatId, '目前还没有配置敏感词屏蔽规则喵。', extra);
   }
-  const lines = rules.map((k) => `\\- \`${escapeMarkdown(k)}\``);
+  const lines = rules.map((k) => `\\- \`${escapeMarkdown(k.raw || k)}\``);
   return sendMarkdown(chatId, ['*当前生效的拦截规则清单*', ...lines].join('\n'), extra);
 }
 
@@ -604,13 +604,14 @@ export async function addKeyword(message) {
     }
   }
 
-  const current = await getKeywordRules();
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
   if (current.includes(rawArg)) {
     return sendMarkdown(chatId, escapeMarkdown(`规则「${rawArg}」已经在清单里了喵`), extra);
   }
 
   const updated = [...current, rawArg];
   await cachedKvPutJson('keyword-rules', updated, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(chatId, escapeMarkdown(`已成功添加拦截规则「${rawArg}」喵！`), extra);
 }
 
@@ -623,14 +624,15 @@ export async function deleteKeyword(message) {
     return sendMarkdown(chatId, '用法：`/delkeyword 规则名称`', extra);
   }
 
-  const current = await getKeywordRules();
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
   const index = current.indexOf(rawArg);
   if (index === -1) {
-    return sendMarkdown(chatId, escapeMarkdown(`在清单里没有找到规则「${rawArg}」喵`), extra);
+    return sendMarkdown(chatId, escapeMarkdown(`在自定义清单里没有找到规则「${rawArg}」喵`), extra);
   }
 
   current.splice(index, 1);
   await cachedKvPutJson('keyword-rules', current, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(chatId, escapeMarkdown(`已将规则「${rawArg}」从清单中移除喵`), extra);
 }
 
@@ -640,8 +642,9 @@ export async function syncKeywordDb(chatId, extra = {}) {
   if (!remote || !remote.length) {
     return sendMarkdown(chatId, '未能从远程数据库获取到关键词规则喵。', extra);
   }
-  const current = await getKeywordRules();
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
   const merged = Array.from(new Set([...current, ...remote]));
   await cachedKvPutJson('keyword-rules', merged, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(chatId, escapeMarkdown(`已完成同步，当前共有 ${merged.length} 条拦截规则生效喵！`), extra);
 }

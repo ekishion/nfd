@@ -3,6 +3,14 @@
   "name": "nfd",
   "main": "src/index.js",
   "compatibility_date": "2024-09-01",
+  // 提示：若使用 GitHub 自动部署，为防止每次提交后 Cloudflare 重置 KV 绑定，
+  // 请在此处取消注释并填入你的 32 位 KV ID（在 Cloudflare 控制台 -> Storage & Databases -> KV 中查看）：
+  // "kv_namespaces": [
+  //   {
+  //     "binding": "nfd",
+  //     "id": "你的KV_ID填写在此处"
+  //   }
+  // ],
   "rules": [
     {
       "type": "Text",
