@@ -6,7 +6,7 @@
 
 ## 方式一：GitHub Actions 自动部署（推荐）
 
-通过 GitHub Actions 自动构建与部署，既能保证代码库公开（不泄露私有 ID 与密钥），又能在每次推送代码到 `main` 分支时自动部署到 Cloudflare，同时确保 KV 绑定和环境变量持久生效。
+通过 GitHub Actions 自动构建与部署，既能保证代码库公开（不泄露私有 ID 与密钥），又能在每次推送代码或手动点击时自动部署到 Cloudflare，同时确保 KV 绑定和环境变量持久生效。
 
 ### 1. 获取 Cloudflare 凭据
 
@@ -18,33 +18,40 @@
    - 点击 Cloudflare 控制台右上角头像 -> My Profile -> API Tokens。
    - 点击 Create Token -> 选择 Edit Cloudflare Workers 模板 -> 点击 Continue to summary -> Create Token 并复制生成的 Token。
 
-### 2. 在 GitHub 仓库中添加 Secrets
+### 2. 在 GitHub 仓库中添加 Secrets（机密）与 Variables（变量）
 
-打开 GitHub 仓库页面：
-1. 进入 Settings -> Secrets and variables -> Actions。
-2. 点击 New repository secret，依次添加以下 6 个必要密钥：
+进入 GitHub 仓库的 **Settings -> Secrets and variables -> Actions**。
 
-| Secret 名称 | 说明 | 示例 |
+> 提示：工作流已做双向自动兼容，无论将参数填入 Secrets 还是 Variables 均可正常生效。建议按以下规范分类添加：
+
+#### 填在「Secrets（机密）」标签页中的高敏感凭证（点击 New repository secret）
+
+| 名称 | 说明 | 示例 |
 | :--- | :--- | :--- |
-| `CF_API_TOKEN` | 刚才创建的 Cloudflare API 令牌 | `v_xxxx...` |
-| `CF_ACCOUNT_ID` | Cloudflare 账户 ID | `a1b2c3d4...` |
-| `KV_NAMESPACE_ID` | 32 位 KV 命名空间 ID | `236c920e...` |
+| `CF_API_TOKEN` | Cloudflare API 令牌（需具备 Workers 编辑权限） | `v_xxxx...` |
 | `ENV_BOT_TOKEN` | Telegram Bot Token | `123456:ABC...` |
 | `ENV_BOT_SECRET` | 自定义的 Webhook 访问密钥 | `uuid-string` |
+
+#### 填在「Variables（变量）」标签页中的普通参数（点击 New repository variable）
+
+| 名称 | 说明 | 示例 |
+| :--- | :--- | :--- |
+| `CF_ACCOUNT_ID` | Cloudflare 账户 ID | `a1b2c3d4...` |
+| `KV_NAMESPACE_ID` | 32 位 KV 命名空间 ID | `236c920e...` |
 | `ENV_ADMIN_UID` | 管理员的纯数字 Telegram UID | `12345678` |
+| `ENV_FORWARD_CHAT_ID` | （可选）接收留言的群聊 ID | `-1001234567890` |
+| `ENV_ALERT_CHAT_ID` | （可选）接收报警的独立群聊 ID | `-1009999999999` |
 
-*(可选密钥：`ENV_FORWARD_CHAT_ID` 用于群聊接收，`ENV_ALERT_CHAT_ID` 用于报警分流群)*
+### 3. 运行部署与 Webhook 激活
 
-### 3. 推送代码触发部署
+- **自动触发**：向 `main` 分支推送代码即可自动触发构建与部署。
+- **手动触发**：进入 GitHub 仓库页面 -> 点击 **Actions** 标签页 -> 点击左侧 **Deploy to Cloudflare Workers** -> 点击右侧 **Run workflow** 下拉按钮并确认运行。
 
-配置完 GitHub Secrets 后：
-1. 项目中已包含 `.github/workflows/deploy.yml` 工作流。
-2. 只要向 `main` 分支推送代码，GitHub Actions 就会自动运行单元测试、打包 `worker.js` 并将注入了 KV 绑定与变量的 Worker 发布到 Cloudflare。
-3. 部署成功后，在浏览器访问：
-   ```text
-   https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET
-   ```
-   显示 `Ok` 即完成 Webhook 注册。
+部署成功后，在浏览器访问：
+```text
+https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET
+```
+显示 `Ok` 即完成 Webhook 注册。
 
 ---
 
@@ -87,5 +94,6 @@
 ## 常见问题排查
 
 - **GitHub Actions 部署报错 Unauthorized**：检查 `CF_API_TOKEN` 是否具备 `Workers: Edit` 权限，且 `CF_ACCOUNT_ID` 填写正确。
+- **Missing entry-point**：请确保 `.github/workflows/deploy.yml` 为最新版本，且部署指令指定了 `deploy worker.js --config wrangler.json`。
 - **Webhook 提示 Unauthorized**：检查访问 URL 中的 `?secret=` 参数是否与 GitHub Secret 中配置的 `ENV_BOT_SECRET` 完全一致。
 - **收不到客人留言**：检查 `ENV_ADMIN_UID` 是否为正确的纯数字 ID，以及 KV 变量名是否为 `nfd`。
