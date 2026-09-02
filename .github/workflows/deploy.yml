@@ -1,6 +1,9 @@
 name: Deploy to Cloudflare Workers
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -34,8 +37,10 @@ jobs:
             compatibility_date: "2024-09-01",
             vars: {}
           };
+          // 仅收集非敏感的普通配置参数，敏感密钥严格由用户在 Cloudflare 控制台直接配置
+          const excludedKeys = new Set(["ENV_BOT_TOKEN", "ENV_BOT_SECRET", "CF_API_TOKEN", "CF_ACCOUNT_ID", "KV_NAMESPACE_ID"]);
           for (const [k, v] of Object.entries(process.env)) {
-            if (k.startsWith("ENV_") && v && v.trim()) {
+            if (k.startsWith("ENV_") && !excludedKeys.has(k) && v && v.trim()) {
               config.vars[k] = v.trim();
             }
           }
@@ -51,8 +56,6 @@ jobs:
           '
         env:
           KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
-          ENV_BOT_TOKEN: ${{ secrets.ENV_BOT_TOKEN || vars.ENV_BOT_TOKEN }}
-          ENV_BOT_SECRET: ${{ secrets.ENV_BOT_SECRET || vars.ENV_BOT_SECRET }}
           ENV_ADMIN_UID: ${{ secrets.ENV_ADMIN_UID || vars.ENV_ADMIN_UID }}
           ENV_FORWARD_CHAT_ID: ${{ secrets.ENV_FORWARD_CHAT_ID || vars.ENV_FORWARD_CHAT_ID }}
           ENV_FORWARD_THREAD_ID: ${{ secrets.ENV_FORWARD_THREAD_ID || vars.ENV_FORWARD_THREAD_ID }}

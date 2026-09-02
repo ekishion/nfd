@@ -59,20 +59,19 @@ nfd/
 
 ### 方式一：GitHub Actions 自动部署（推荐）
 
-1. 获取 Telegram Bot Token、Webhook Secret 与管理员用户 ID。
-2. 在 Cloudflare 控制台获取 Account ID、32 位 KV ID 与 API Token。
-3. 在 GitHub 仓库的 Settings -> Secrets and variables -> Actions 中添加对应 Secrets 与 Variables。
-4. 推送代码至 `main` 分支触发自动化部署（或在 Actions 页面手动点击 Run workflow）。
-5. 访问 `https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET` 完成 Webhook 注册。
+1. 在 GitHub 仓库配置发布凭据（`CF_API_TOKEN`、`CF_ACCOUNT_ID`）与业务变量（`KV_NAMESPACE_ID`、`ENV_ADMIN_UID` 等）。
+2. 推送代码至 `main` 分支，或在 Actions 页面点击 Run workflow 自动创建并部署 Worker。
+3. 进入 Cloudflare Worker 控制台（设置 -> 变量和机密），添加 `ENV_BOT_TOKEN` 与 `ENV_BOT_SECRET` 并加密保存。
+4. 访问 `https://你的worker域名/registerWebhook?secret=你的ENV_BOT_SECRET` 完成激活。
 
-详细步骤与图文说明请参阅 [部署指南](docs/deployment.md)。
+详细参数与说明见 [部署指南](docs/deployment.md)。
 
 ### 方式二：单文件直接部署
 
-1. 在本地执行 `node build.js` 打包生成 `worker.js`。
-2. 在 Cloudflare 中创建 Worker，绑定 KV 命名空间 `nfd` 并配置环境变量。
-3. 复制生成的 `worker.js` 内容粘贴到 Worker 在线编辑器中并部署。
-4. 访问 `https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET` 完成 Webhook 注册。
+1. 本地执行 `node build.js` 打包生成 `worker.js`。
+2. 在 Cloudflare 创建 Worker，绑定 KV（变量名 `nfd`）并配置环境变量。
+3. 将生成的 `worker.js` 内容复制粘贴到 Worker 在线编辑器并部署。
+4. 访问注册地址激活 Webhook。
 
 ## 详细文档
 
