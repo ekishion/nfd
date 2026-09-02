@@ -11,8 +11,9 @@ const USER_ACK_COOLDOWN_MS = Number(getOptionalEnv('ENV_USER_ACK_COOLDOWN_MS', '
 const COMMAND_WARNING_COOLDOWN_MS = Number(getOptionalEnv('ENV_COMMAND_WARNING_COOLDOWN_MS', '60000'));
 const KEYWORD_VIOLATION_LIMIT = Number(getOptionalEnv('ENV_KEYWORD_VIOLATION_LIMIT', '3'));
 const KEYWORD_VIOLATION_TTL = Number(getOptionalEnv('ENV_KEYWORD_VIOLATION_TTL_SECONDS', String(24 * 3600)));
-const ENABLE_NOTIFICATION = true;
+const ENABLE_NOTIFICATION = getOptionalEnv('ENV_ENABLE_NOTIFICATION', 'true') !== 'false';
 const KEYWORD_NOTICE_TO_USER = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'true') !== 'false';
+const KEYWORD_NOTICE_TO_ADMIN = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_ADMIN', 'true') !== 'false';
 const AUTO_BLOCK_KEYWORD_VIOLATORS = getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false';
 
 const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/fraud.db');
@@ -282,6 +283,7 @@ async function recordKeywordViolation(message, keyword) {
 
 async function notifyKeywordBlocked(message, keyword, violation) {
   await incrementStat('keyword-blocked');
+  if (!KEYWORD_NOTICE_TO_ADMIN) return null;
   const lines = [
     '*人偶拦下了一条留言*',
     mdLine('关键词', keyword),
