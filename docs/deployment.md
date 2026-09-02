@@ -41,6 +41,9 @@
 | `ENV_ADMIN_UID` | 管理员的纯数字 Telegram UID | `12345678` |
 | `ENV_FORWARD_CHAT_ID` | （可选）接收留言的群聊 ID | `-1001234567890` |
 | `ENV_ALERT_CHAT_ID` | （可选）接收报警的独立群聊 ID | `-1009999999999` |
+| `ENV_ALERT_THREAD_ID` | （可选）拦截通知的话题 ID | `9` |
+| `ENV_ENABLE_FORUM_TOPICS` | （可选）是否开启论坛独立话题模式 | `true` |
+| `ENV_FORWARD_DELAY_SECONDS` | （可选）转发聚合延迟秒数 | `5` |
 
 ### 3. 运行部署与 Webhook 激活
 
@@ -57,12 +60,16 @@ https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET
 
 ## 方式二：网页端单文件复制粘贴部署
 
-如果不使用 GitHub Actions，可直接在 Cloudflare 网页上使用打包好的 `worker.js`：
+如果不使用 GitHub Actions，可在本地生成 `worker.js` 后手动粘贴到 Cloudflare：
 
-1. 在 Cloudflare 控制台创建新的 Worker（不要使用 Connect to Git）。
-2. 在 Worker 的 Settings 中完成 KV 绑定（变量名 `nfd`），并添加环境变量（建议点击 Encrypt 加密保存）。
-3. 打开 Worker 的在线代码编辑器，将根目录中的 `worker.js` 内容完整复制并覆盖粘贴，保存并部署。
-4. 在浏览器中访问注册地址：
+1. 本地安装依赖并执行打包：
+   ```bash
+   node build.js
+   ```
+2. 在 Cloudflare 控制台创建新的 Worker（不要使用 Connect to Git）。
+3. 在 Worker 的 Settings 中完成 KV 绑定（变量名 `nfd`），并添加环境变量（建议点击 Encrypt 加密保存）。
+4. 打开 Worker 的在线代码编辑器，将生成的 `worker.js` 内容完整复制并覆盖粘贴，保存并部署。
+5. 在浏览器中访问注册地址：
    ```text
    https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET
    ```
@@ -73,21 +80,18 @@ https://你的worker域名/registerWebhook?secret=你的_ENV_BOT_SECRET
 
 使用 Cloudflare 官方 CLI 工具 `wrangler`：
 
-1. 安装依赖：
+1. 安装依赖并配置环境变量：
    ```bash
    npm install
-   ```
-2. 配置环境变量与密钥：
-   ```bash
    npx wrangler secret put ENV_BOT_TOKEN
    npx wrangler secret put ENV_BOT_SECRET
    npx wrangler secret put ENV_ADMIN_UID
    ```
-3. 部署：
+2. 部署：
    ```bash
    npx wrangler deploy
    ```
-4. 访问 `/registerWebhook?secret=你的_ENV_BOT_SECRET` 激活 Webhook。
+3. 访问 `/registerWebhook?secret=你的_ENV_BOT_SECRET` 激活 Webhook。
 
 ---
 

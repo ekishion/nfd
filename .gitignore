@@ -2,6 +2,8 @@
 .wrangler/
 .dev.vars
 .dev.vars.*
+wrangler.json
+worker.js
 
 # Logs
 logs

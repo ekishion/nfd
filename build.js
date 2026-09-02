@@ -1,6 +1,6 @@
 // ==============================================================================
-// build.js - Lightweight 0-Dependency Bundler for NFD Cloudflare Worker
-// Bundles src/*.js into worker.js for single-file Cloudflare Worker deployment
+// build.js - Lightweight Bundler for NFD Cloudflare Worker
+// Bundles src/*.js into a single worker.js module for Cloudflare Workers
 // ==============================================================================
 
 const fs = require('fs');
@@ -33,7 +33,6 @@ function bundle() {
     '',
   ].join('\n');
 
-  // Read data templates if present
   let defaultStartMsg = '';
   let defaultNotifyMsg = '';
   try {
@@ -54,22 +53,24 @@ function bundle() {
 
     let code = fs.readFileSync(filePath, 'utf8');
 
-    // Replace data imports with inlined strings for config.js
+    // In config.js, inline the data file contents
     if (file === 'config.js') {
       code = code.replace(/import\s+defaultStartMessage\s+from\s+['"].*?['"];?/g, `const defaultStartMessage = ${JSON.stringify(defaultStartMsg)};`);
       code = code.replace(/import\s+defaultNotification\s+from\s+['"].*?['"];?/g, `const defaultNotification = ${JSON.stringify(defaultNotifyMsg)};`);
     }
 
-    // Strip ES module imports
-    code = code.replace(/^\s*import\s+.*?from\s+['"].*?['"];?\r?\n?/gm, '');
-    code = code.replace(/^\s*import\s+['"].*?['"];?\r?\n?/gm, '');
+    // Strip all ES module imports (both single-line and multi-line)
+    code = code.replace(/import\s+[\s\S]*?from\s+['"].*?['"];?\r?\n?/g, '');
+    code = code.replace(/import\s+['"].*?['"];?\r?\n?/g, '');
 
-    // Strip "export default { async fetch(...) { ... } };" block completely
-    code = code.replace(/export\s+default\s*\{[\s\S]*?\n\};\r?\n?/g, '');
-
-    // Strip ES module named exports: "export const", "export function", "export async function", "export let", "export var"
+    // Strip named exports: "export const", "export function", "export async function", "export let", "export var"
     code = code.replace(/^\s*export\s+(const|let|var|function|async function|class)\s+/gm, '$1 ');
     code = code.replace(/^\s*export\s*\{[^}]*\};?\r?\n?/gm, '');
+
+    // Keep "export default" only in index.js, remove from any other file if present
+    if (file !== 'index.js') {
+      code = code.replace(/export\s+default\s*[\s\S]*?;\r?\n?/g, '');
+    }
 
     contents.push(`// --- MODULE: ${file} ---\n` + code.trim());
   }
