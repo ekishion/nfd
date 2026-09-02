@@ -10,10 +10,11 @@ import {
   getSecret,
   getAdminUid,
   getForwardChatId,
+  getAlertChatId,
   getStartMsgUrl,
 } from './config.js';
 import { fetchTextOrDefault, isDuplicateUpdate, getBotUsername } from './cache.js';
-import { apiUrl, sendMarkdown, getCommand, formatStartMessage } from './telegram.js';
+import { apiUrl, sendMarkdown, getCommand, formatStartMessage, leaveChat } from './telegram.js';
 import { handleGuestMessage, getMappedGuestId } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
 
@@ -64,13 +65,35 @@ export async function onUpdate(update) {
     if (update.update_id && isDuplicateUpdate(update.update_id)) {
       return;
     }
-    if (update.message) {
+    if (update.my_chat_member) {
+      await onMyChatMember(update.my_chat_member);
+    } else if (update.message) {
       await onMessage(update.message);
     } else if (update.callback_query) {
       await onCallbackQuery(update.callback_query);
     }
   } catch (err) {
     console.log(JSON.stringify({ error: 'onUpdate-failed', message: err.message, stack: err.stack }));
+  }
+}
+
+export async function onMyChatMember(myChatMember) {
+  const chat = myChatMember?.chat;
+  if (!chat?.id) return;
+  const isGroup = Boolean(chat.type && chat.type !== 'private');
+  if (!isGroup) return;
+
+  const forwardChatId = getForwardChatId();
+  const alertChatId = getAlertChatId();
+  const isAuthorized = (forwardChatId && String(chat.id) === forwardChatId) ||
+                       (alertChatId && String(chat.id) === alertChatId);
+
+  // 被拉入未授权的陌生群组或频道时，自动退出
+  if (!isAuthorized) {
+    const status = myChatMember.new_chat_member?.status;
+    if (status === 'member' || status === 'administrator') {
+      await leaveChat(chat.id).catch(() => {});
+    }
   }
 }
 
@@ -83,14 +106,19 @@ export async function onMessage(message) {
 
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
+  const alertChatId = getAlertChatId();
   const isSenderAdmin = Boolean(adminUid && String(message.from?.id) === adminUid);
   const isPrivateAdminChat = Boolean(adminUid && String(message.chat.id) === adminUid);
   const isForwardChat = Boolean(forwardChatId && String(message.chat.id) === forwardChatId);
+  const isAlertChat = Boolean(alertChatId && String(message.chat.id) === alertChatId);
 
-  // Group / Supergroup / Channel processing
+  // 群聊 / 超级群 / 频道消息处理
   if (isGroup) {
-    // Only process inside authorized forward chat or by admin sender
-    if (!isForwardChat && !isSenderAdmin) {
+    const isAuthorizedGroup = isForwardChat || isAlertChat;
+
+    // 收到未授权陌生群聊消息时，自动退群
+    if (!isAuthorizedGroup) {
+      await leaveChat(message.chat.id).catch(() => {});
       return;
     }
 
@@ -106,23 +134,22 @@ export async function onMessage(message) {
     }
 
     if (command) {
-      // Management commands restricted to admin sender
+      // 管理指令仅允许管理员触发
       if (ADMIN_COMMANDS.has(command) && !isSenderAdmin) {
         return;
       }
       return handleAdminMessage(message, command);
     }
 
-    // Check if replying to a guest or typing inside a guest forum topic
+    // 判断是否在回复某位客人或在专属话题内发言
     const guestChatId = await getMappedGuestId(message);
     if (guestChatId) {
       return handleAdminMessage(message, '');
     }
-    // Regular group chatter or mentions - silently ignore
     return;
   }
 
-  // Private chat processing
+  // 私聊消息处理
   if (command === '/start') {
     if (isPrivateAdminChat || isSenderAdmin) {
       return sendMarkdown(
@@ -154,10 +181,30 @@ export async function registerWebhook(requestUrl) {
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secret,
-      allowed_updates: ['message', 'callback_query'],
+      allowed_updates: ['message', 'callback_query', 'my_chat_member'],
       drop_pending_updates: true,
     }),
   }).then((response) => response.json());
+
+  const commands = [
+    { command: 'panel', description: '控制面板' },
+    { command: 'stats', description: '统计数据' },
+    { command: 'user', description: '客人画像' },
+    { command: 'tag', description: '客人备注' },
+    { command: 'quick', description: '快捷回复' },
+    { command: 'quicks', description: '短语列表' },
+    { command: 'away', description: '离开模式' },
+    { command: 'back', description: '恢复在线' },
+    { command: 'block', description: '拉黑用户' },
+    { command: 'unblock', description: '解除拉黑' },
+    { command: 'keywords', description: '关键词列表' },
+  ];
+  await fetch(apiUrl('setMyCommands'), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ commands }),
+  }).catch(() => {});
+
   return new Response(r.ok ? 'Ok' : JSON.stringify(r, null, 2));
 }
 

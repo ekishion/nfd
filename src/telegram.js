@@ -60,6 +60,10 @@ export function createForumTopic(msg = {}) {
   return requestTelegram('createForumTopic', msg);
 }
 
+export function leaveChat(chatId) {
+  return requestTelegram('leaveChat', { chat_id: chatId });
+}
+
 export function escapeMarkdown(value = '') {
   return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }

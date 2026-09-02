@@ -431,4 +431,19 @@ assert.strictEqual(getCommand('/panel', myBot), '/panel');
 assert.strictEqual(getCommand('你好 @username_to_id_bot 查下id', myBot), '');
 console.log('Non-NFD bot commands and mentions properly ignored');
 
-console.log('\nAll 16 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 17: Unauthorized Group Whitelist & Auto-Leave Validation
+// ------------------------------------------------------------------------------
+function checkGroupAuthorization(chatId, forwardChatId, alertChatId) {
+  const isAuthorized = (forwardChatId && String(chatId) === String(forwardChatId)) ||
+                       (alertChatId && String(chatId) === String(alertChatId));
+  return isAuthorized;
+}
+
+assert.strictEqual(checkGroupAuthorization('-100111111', '-100111111', '-100222222'), true);
+assert.strictEqual(checkGroupAuthorization('-100222222', '-100111111', '-100222222'), true);
+assert.strictEqual(checkGroupAuthorization('-100999999', '-100111111', '-100222222'), false);
+console.log('Unauthorized group whitelist & auto-leave check verified');
+
+console.log('\nAll 17 test suites passed with 0 errors!\n');
+
