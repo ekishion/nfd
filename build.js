@@ -1,6 +1,6 @@
 // ==============================================================================
-// build.js - Lightweight Bundler for NFD Cloudflare Worker
-// Bundles src/*.js into a single worker.js module for Cloudflare Workers
+// build.js - Lightweight Bundler with Conditional Tree-Shaking for NFD
+// Bundles src/*.js and src/notifiers/*.js into a single worker.js module
 // ==============================================================================
 
 const fs = require('fs');
@@ -10,16 +10,56 @@ const SRC_DIR = path.join(__dirname, 'src');
 const DATA_DIR = path.join(__dirname, 'data');
 const OUTPUT_FILE = path.join(__dirname, 'worker.js');
 
-const MODULE_ORDER = [
-  'config.js',
-  'cache.js',
-  'telegram.js',
-  'moderation.js',
-  'pipeline.js',
-  'panel.js',
-  'admin.js',
-  'index.js',
+const NOTIFIER_MAP = [
+  { key: 'pushdeer', file: 'notifiers/pushdeer.js', env: 'ENV_PUSHDEER_KEY' },
+  { key: 'serverchan', file: 'notifiers/serverchan.js', env: 'ENV_SERVERCHAN_KEY' },
 ];
+
+function resolveActiveModules() {
+  const isBuildAll = process.env.BUILD_ALL_NOTIFIERS === 'true' || process.env.NODE_ENV === 'test';
+
+  // Find which notifier channels have environment variables configured
+  const activeChannels = NOTIFIER_MAP.filter((item) => {
+    if (isBuildAll) return true;
+    const val = process.env[item.env];
+    return val && String(val).trim().length > 0;
+  });
+
+  const baseModules = [
+    'config.js',
+    'cache.js',
+    'telegram.js',
+  ];
+
+  const notifierModules = [];
+  if (activeChannels.length > 0) {
+    notifierModules.push('notifiers/base.js');
+    for (const ch of activeChannels) {
+      notifierModules.push(ch.file);
+    }
+    notifierModules.push('notifiers/index.js');
+  } else {
+    // Zero external notification channels configured: inject stub dispatcher without bundling any sub-channel files
+    notifierModules.push({
+      virtualName: 'notifiers/index.js (stub)',
+      code: `
+// Notification channels disabled / zero-bloat tree-shaken stub
+export const notificationProviders = {};
+export async function dispatchNotification() {}
+`,
+    });
+  }
+
+  const trailingModules = [
+    'moderation.js',
+    'pipeline.js',
+    'panel.js',
+    'admin.js',
+    'index.js',
+  ];
+
+  return [...baseModules, ...notifierModules, ...trailingModules];
+}
 
 function bundle() {
   console.log('Bundling src/*.js into worker.js...');
@@ -43,15 +83,24 @@ function bundle() {
   } catch {}
 
   const contents = [];
+  const modules = resolveActiveModules();
 
-  for (const file of MODULE_ORDER) {
-    const filePath = path.join(SRC_DIR, file);
-    if (!fs.existsSync(filePath)) {
-      console.error(`Missing module file: ${file}`);
-      process.exit(1);
+  for (const mod of modules) {
+    let file = '';
+    let code = '';
+
+    if (typeof mod === 'object' && mod.virtualName) {
+      file = mod.virtualName;
+      code = mod.code;
+    } else {
+      file = mod;
+      const filePath = path.join(SRC_DIR, file);
+      if (!fs.existsSync(filePath)) {
+        console.error(`Missing module file: ${file}`);
+        process.exit(1);
+      }
+      code = fs.readFileSync(filePath, 'utf8');
     }
-
-    let code = fs.readFileSync(filePath, 'utf8');
 
     // In config.js, inline the data file contents
     if (file === 'config.js') {

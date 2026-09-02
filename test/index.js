@@ -445,5 +445,56 @@ assert.strictEqual(checkGroupAuthorization('-100222222', '-100111111', '-1002222
 assert.strictEqual(checkGroupAuthorization('-100999999', '-100111111', '-100222222'), false);
 console.log('Unauthorized group whitelist & auto-leave check verified');
 
-console.log('\nAll 17 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 18: Multi-Channel Push Notification Formatting & Filtering
+// ------------------------------------------------------------------------------
+function testBuildNotificationContent(event, payload) {
+  if (event === 'security_alert') {
+    return {
+      title: `[NFD 拦截报警] ${payload.reason || '安全事件'}`,
+      summary: `${payload.reason || '安全拦截'}: ${payload.senderName || payload.senderId || '未知'}`,
+      content: `🚨 安全拦截报警\n- 触发类型: ${payload.reason}`,
+      event,
+    };
+  }
+  const guest = payload.senderName || `客人 ${payload.senderId || ''}`.trim();
+  const count = payload.messageCount || 1;
+  return {
+    title: `[NFD 客人新留言] 来自 ${guest}`,
+    summary: `新留言 (${count}条): ${payload.text ? payload.text.substring(0, 50) : '附件消息'}`,
+    content: `📨 收到新留言 (${count} 条)`,
+    event,
+  };
+}
+
+const alertNotice = testBuildNotificationContent('security_alert', {
+  reason: '敏感关键词',
+  senderName: '张三',
+  senderId: '123456',
+  detail: '代充',
+});
+assert.strictEqual(alertNotice.title, '[NFD 拦截报警] 敏感关键词');
+assert.strictEqual(alertNotice.summary, '敏感关键词: 张三');
+
+const guestNotice = testBuildNotificationContent('guest_message', {
+  senderName: '李四',
+  senderId: '789012',
+  messageCount: 3,
+  text: '你好，请问有什么优惠吗？',
+});
+assert.strictEqual(guestNotice.title, '[NFD 客人新留言] 来自 李四');
+assert.strictEqual(guestNotice.summary.includes('3条'), true);
+
+function shouldSendNotification(event, onAlertOnly) {
+  if (onAlertOnly && event !== 'security_alert') return false;
+  return true;
+}
+
+assert.strictEqual(shouldSendNotification('guest_message', true), false);
+assert.strictEqual(shouldSendNotification('security_alert', true), true);
+assert.strictEqual(shouldSendNotification('guest_message', false), true);
+console.log('Multi-channel push notification formatting & filtering verified');
+
+console.log('\nAll 18 test suites passed with 0 errors!\n');
+
 

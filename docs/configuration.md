@@ -33,7 +33,10 @@
 | `ENV_START_MESSAGE_URL` | 可选 | - | 自定义 /start 启动文案的远程 URL（MarkdownV2） |
 | `ENV_NOTIFICATION_URL` | 可选 | - | 自定义交易安全提醒文案的远程 URL（MarkdownV2） |
 | `ENV_FRAUD_DB_URL` | 可选 | - | 自定义诈骗 UID 名单数据库的远程 URL |
-| `ENV_KEYWORD_DB_URL` | 可选 | - | 自定义敏感关键词数据库的远程 URL |
+| `ENV_PUSHDEER_KEY` | 可选 | - | PushDeer 客户端 PushKey（支持逗号分隔多个 Key） |
+| `ENV_PUSHDEER_URL` | 可选 | - | （可选）自建 PushDeer 服务的完整 API 端点地址 |
+| `ENV_SERVERCHAN_KEY` | 可选 | - | Server酱（Turbo版）SendKey 微信推送密钥 |
+| `ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY` | 可选 | `false` | 设为 `true` 时仅在触发安全拦截报警时外发推送，正常留言不外发 |
 
 ---
 
@@ -145,6 +148,14 @@
 
 4. **`data/notification.txt`**
    - 默认的定期交易安全提醒文案。
+
+---
+
+## 多渠道推送配置
+
+系统支持将客人留言与安全告警同步推送至手机与微信（PushDeer / Server酱）。
+
+详细配置指南请参阅 [外部推送配置手册](notifications.md)。
 
 ---
 

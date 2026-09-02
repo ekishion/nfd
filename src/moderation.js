@@ -16,6 +16,7 @@ import {
   fetchKeywordDb,
 } from './cache.js';
 import { requestTelegram, getMessageText, sendMarkdown, mdLine, buildUserName } from './telegram.js';
+import { dispatchNotification } from './notifiers/index.js';
 
 export function normalizeMessageText(text = '') {
   if (!text || typeof text !== 'string') return '';
@@ -201,12 +202,22 @@ export async function recordKeywordViolation(message, keyword) {
 
 export async function notifyKeywordBlocked(message, matchResult, violation, config) {
   await incrementStat('keyword-blocked');
+  const ruleName = typeof matchResult === 'string' ? matchResult : matchResult.rule;
+  const snippet = typeof matchResult === 'object' && matchResult?.snippet ? matchResult.snippet : '';
+  const senderName = buildUserName(message.from || {});
+
+  // Dispatch multi-channel notification
+  await dispatchNotification('security_alert', {
+    reason: '触发敏感关键词',
+    senderId: message.chat.id,
+    senderName,
+    detail: `触发规则: ${ruleName} (违规次数: ${violation.count})`,
+    snippet,
+  });
+
   if (!config.notice_admin) return null;
   const alertChatId = config.alert_chat_id || getAdminUid();
   if (!alertChatId) return null;
-
-  const ruleName = typeof matchResult === 'string' ? matchResult : matchResult.rule;
-  const snippet = typeof matchResult === 'object' && matchResult?.snippet ? matchResult.snippet : '';
 
   const lines = [
     '*人偶拦下了一条留言*',

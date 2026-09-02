@@ -74,7 +74,10 @@ jobs:
           ENV_FRAUD_DB_URL: ${{ secrets.ENV_FRAUD_DB_URL || vars.ENV_FRAUD_DB_URL }}
           ENV_KEYWORD_DB_URL: ${{ secrets.ENV_KEYWORD_DB_URL || vars.ENV_KEYWORD_DB_URL }}
           ENV_START_MESSAGE_URL: ${{ secrets.ENV_START_MESSAGE_URL || vars.ENV_START_MESSAGE_URL }}
-          ENV_NOTIFICATION_URL: ${{ secrets.ENV_NOTIFICATION_URL || vars.ENV_NOTIFICATION_URL }}
+          ENV_PUSHDEER_KEY: ${{ secrets.ENV_PUSHDEER_KEY || vars.ENV_PUSHDEER_KEY }}
+          ENV_PUSHDEER_URL: ${{ secrets.ENV_PUSHDEER_URL || vars.ENV_PUSHDEER_URL }}
+          ENV_SERVERCHAN_KEY: ${{ secrets.ENV_SERVERCHAN_KEY || vars.ENV_SERVERCHAN_KEY }}
+          ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY: ${{ secrets.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY || vars.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY }}
 
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3

@@ -73,6 +73,22 @@ export function getStartMsgUrl() {
   return getOptionalEnv('ENV_START_MESSAGE_URL');
 }
 
+export function getPushdeerKey() {
+  return getOptionalEnv('ENV_PUSHDEER_KEY');
+}
+
+export function getPushdeerUrl() {
+  return getOptionalEnv('ENV_PUSHDEER_URL');
+}
+
+export function getServerchanKey() {
+  return getOptionalEnv('ENV_SERVERCHAN_KEY');
+}
+
+export function getNotifyChannelsOnAlertOnly() {
+  return getOptionalEnv('ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY', 'false') === 'true';
+}
+
 export const ADMIN_COMMANDS = new Set([
   '/help',
   '/panel',

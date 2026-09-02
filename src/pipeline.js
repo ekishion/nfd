@@ -53,6 +53,7 @@ import {
   checkFloodLimit,
   isDangerousDocument,
 } from './moderation.js';
+import { dispatchNotification } from './notifiers/index.js';
 
 export async function rememberMessageMap(adminMessageId, guestChatId) {
   setMemoryCache(`msg-map-${adminMessageId}`, String(guestChatId), 3600000);
@@ -97,6 +98,12 @@ export async function handleGuestMessage(message) {
   // Anti-Flood / Rate Limiting
   const floodCheck = await checkFloodLimit(chatId, config);
   if (floodCheck.blocked) {
+    await dispatchNotification('security_alert', {
+      reason: '防刷屏频控静音',
+      senderId: chatId,
+      senderName: buildUserName(message.from || {}),
+      detail: `触发防刷屏频控限制，已静音 ${floodCheck.remainingSeconds || 60} 秒`,
+    });
     return sendCooldownPlainText(
       chatId,
       `flood-notice-${chatId}`,
@@ -108,6 +115,12 @@ export async function handleGuestMessage(message) {
   // Dangerous document filter
   if (config.block_executables && isDangerousDocument(message)) {
     await incrementStat('executable-blocked');
+    await dispatchNotification('security_alert', {
+      reason: '危险可执行文件拦截',
+      senderId: chatId,
+      senderName: buildUserName(message.from || {}),
+      detail: `文件: ${message.document?.file_name || '未知文件名'} (${message.document?.mime_type || '未知类型'})`,
+    });
     return sendCooldownPlainText(
       chatId,
       `exec-block-${chatId}`,
@@ -308,6 +321,15 @@ export async function processGuestMessageBatch(messages, config = null) {
   }
 
   if (deliveredAny) {
+    const guestTag = await getGuestTag(chatId);
+    const guestName = buildUserName(firstMessage.from || {}) + (guestTag ? ` [${guestTag}]` : '');
+    const fullText = messages.map((m) => m.text || m.caption || '').filter(Boolean).join('\n');
+    await dispatchNotification('guest_message', {
+      senderId: chatId,
+      senderName: guestName,
+      messageCount: messages.length,
+      text: fullText,
+    });
     await handleGuestDelivered(messages[messages.length - 1], config);
   }
 }
@@ -339,6 +361,12 @@ export async function handleNotify(message, config = null) {
   const extra = config.alert_thread_id ? { message_thread_id: config.alert_thread_id } : {};
 
   if (await isFraud(chatId)) {
+    await dispatchNotification('security_alert', {
+      reason: '诈骗名单命中',
+      senderId: chatId,
+      senderName: buildUserName(message.from || {}),
+      detail: '命中本地/远程 fraud.db 诈骗黑名单',
+    });
     return sendMarkdown(alertChatId, `*诈骗库命中*\n${mdLine('UID', chatId)}`, extra);
   }
 

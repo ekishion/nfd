@@ -22,36 +22,39 @@ No Fraud / Node Forward Bot
   - 支持将消息转发至私密群组或指定话题
   - 支持论坛超级群模式，自动为每位新客人创建专属独立话题
   - 对话消息与拦截报警日志支持双通道独立分流
+- 外部推送引擎：支持将客人留言与安全告警实时同步推送到外部平台。
 - 双向消息转达：管理员直接回复转发消息即可回传给原用户，并支持一键撤回。
 
 ## 项目结构
 
 ```text
 nfd/
-├── src/                # 源码目录
-│   ├── config.js       # 环境变量、常量与数据文案引入
-│   ├── cache.js        # 内存缓存、KV 存储与远程数据库拉取
-│   ├── telegram.js     # Telegram API 封装与消息格式化
-│   ├── moderation.js   # 黑名单、用户名、头像与关键词审查
-│   ├── pipeline.js     # 消息延迟缓冲与批量转发逻辑
-│   ├── panel.js        # 控制面板渲染与回调处理
-│   ├── admin.js        # 管理员指令与操作处理
-│   └── index.js        # Worker 入口与 Webhook 路由
-├── data/               # 独立数据与文案目录
-│   ├── fraud.db        # 诈骗 UID 列表
-│   ├── keyword.db      # 敏感关键词列表
-│   ├── startMessage.md # /start 欢迎文案模板
-│   └── notification.txt# 交易安全提醒文案模板
-├── docs/               # 文档目录
-│   ├── deployment.md   # 部署教程（GitHub Actions / 单文件部署 / CLI）
-│   └── configuration.md# 环境变量对照表与管理指令手册
-├── .github/workflows/  # CI/CD 工作流
-│   └── deploy.yml      # GitHub Actions 自动化构建部署脚本
-├── test/               # 自动化测试套件
-│   └── index.js        # 16 项功能与逻辑测试
-├── wrangler.jsonc      # Cloudflare Workers 配置文件
-├── build.js            # 单文件打包脚本（执行后生成 worker.js）
-├── package.json        # 项目配置与构建命令
+├── src/                  
+│   ├── notifiers/        # 外部通知子模块目录
+│   ├── config.js         # 环境变量、常量与数据文案引入
+│   ├── cache.js          # 内存缓存、KV 存储与远程数据库拉取
+│   ├── telegram.js       # Telegram API 封装与消息格式化
+│   ├── moderation.js     # 黑名单、用户名、头像与关键词审查
+│   ├── pipeline.js       # 消息延迟缓冲与批量转发逻辑
+│   ├── panel.js          # 控制面板渲染与回调处理
+│   ├── admin.js          # 管理员指令与操作处理
+│   └── index.js          # Worker 入口与 Webhook 路由
+├── data/                 # 独立数据与文案目录
+│   ├── fraud.db          # 诈骗 UID 列表
+│   ├── keyword.db        # 敏感关键词列表
+│   ├── startMessage.md   # /start 欢迎文案模板
+│   └── notification.txt  # 交易安全提醒文案模板
+├── docs/                 # 文档目录
+│   ├── deployment.md     # 部署教程
+│   ├── configuration.md  # 环境变量对照表与管理指令手册
+│   └── notifications.md  # 外部推送配置指南
+├── .github/workflows/    # CI/CD 工作流
+│   └── deploy.yml        # 自动化构建部署脚本
+├── test/                 # 自动化测试套件
+│   └── index.js          # 功能与逻辑测试
+├── wrangler.jsonc        # 配置文件
+├── build.js              # 单文件打包脚本
+├── package.json          # 项目配置与构建命令
 └── README.md
 ```
 
@@ -77,6 +80,7 @@ nfd/
 
 - [部署指南](docs/deployment.md)：包含 GitHub Actions 自动化配置、单文件部署与 Wrangler CLI 操作说明。
 - [配置与管理手册](docs/configuration.md)：包含完整环境变量说明、群聊话题路由指引、`/panel` 控制面板使用说明与管理指令汇总。
+- [外部推送配置手册](docs/notifications.md)：包含 PushDeer 与 Server酱 推送接入教程。
 
 ## 参考
 
