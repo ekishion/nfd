@@ -1,0 +1,13 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nfd",
+  "main": "src/index.js",
+  "compatibility_date": "2024-09-01",
+  "rules": [
+    {
+      "type": "Text",
+      "globs": ["**/*.md", "**/*.txt"],
+      "fallthrough": true
+    }
+  ]
+}
