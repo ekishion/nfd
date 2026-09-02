@@ -31,6 +31,7 @@ No Fraud / Node Forward Bot
    - `ENV_KEYWORD_NOTICE_TO_ADMIN`：可选，设为 `false` 时关键词拦截不通知管理员（默认 `true`）。
    - `ENV_REQUIRE_USERNAME`：可选，设为 `true` 时要求用户必须拥有 Telegram 用户名（`@username`），无用户名时不转发留言（默认 `false`）。
    - `ENV_REQUIRE_PHOTO`：可选，设为 `true` 时要求用户必须拥有个人头像（Profile Photo），无头像时不转发留言（默认 `false`，别名 `ENV_REQUIRE_AVATAR`）。
+   - `ENV_FORWARD_DELAY_SECONDS`：可选，转发缓冲延迟秒数（如设为 `5` 或 `10`），汇总该时间段内的多条连续消息统一审查并一起转发（默认 `0` 不延迟）。
    - `ENV_ENABLE_NOTIFICATION`：可选，设为 `false` 时关闭交易提醒，默认 `true`。
    - `ENV_USER_ACK_COOLDOWN_MS`：可选，留言成功回执冷却时间，默认 `30000`。
    - `ENV_COMMAND_WARNING_COOLDOWN_MS`：可选，用户误触管理命令或被屏蔽提示冷却时间，默认 `60000`。

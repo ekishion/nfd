@@ -16,6 +16,7 @@ const KEYWORD_NOTICE_TO_USER = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'tru
 const KEYWORD_NOTICE_TO_ADMIN = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_ADMIN', 'true') !== 'false';
 const REQUIRE_USERNAME = getOptionalEnv('ENV_REQUIRE_USERNAME', 'false') === 'true';
 const REQUIRE_PHOTO = getOptionalEnv('ENV_REQUIRE_PHOTO', getOptionalEnv('ENV_REQUIRE_AVATAR', 'false')) === 'true';
+const FORWARD_DELAY_SECONDS = Number(getOptionalEnv('ENV_FORWARD_DELAY_SECONDS', getOptionalEnv('ENV_FORWARD_DELAY', '0')));
 const AUTO_BLOCK_KEYWORD_VIOLATORS = getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false';
 
 const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/fraud.db');
@@ -58,6 +59,10 @@ function getOptionalEnv(name, fallback = '') {
 
 function asArray(value) {
   return Array.isArray(value) ? value : [];
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {
@@ -162,7 +167,7 @@ function formatStartMessage(template, user) {
     .replaceAll('{用户名}', username);
 }
 
-function buildMessageInfo(message) {
+function buildMessageInfo(message, count = 1) {
   const user = message.from || {};
   const lines = [
     '*人偶收到新留言*',
@@ -173,6 +178,9 @@ function buildMessageInfo(message) {
   }
   if (message.chat?.type && message.chat.type !== 'private') {
     lines.push(mdLine('来源会话', `${message.chat.title || message.chat.id} / ${message.chat.type}`));
+  }
+  if (count > 1) {
+    lines.push(mdLine('连续留言', `${count} 条`));
   }
   return lines.join('\n');
 }
@@ -619,14 +627,78 @@ async function handleGuestMessage(message) {
     }
   }
 
-  const blockedKeyword = await findBlockedKeyword(message);
+  if (FORWARD_DELAY_SECONDS > 0) {
+    return handleDelayedGuestMessage(message);
+  }
+
+  return processGuestMessageBatch([message]);
+}
+
+async function handleDelayedGuestMessage(message) {
+  const chatId = String(message.chat.id);
+  const batchKey = `pending-msgs-${chatId}`;
+  const tokenKey = `pending-token-${chatId}`;
+
+  const current = asArray(await kvGetJson(batchKey, []));
+  if (!current.some((m) => m.message_id === message.message_id)) {
+    current.push(message);
+  }
+
+  const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  await kvPutJson(batchKey, current, { expirationTtl: 300 });
+  await kvPutJson(tokenKey, token, { expirationTtl: 300 });
+
+  if (current.length >= 10) {
+    await kvPutJson(batchKey, null, { expirationTtl: 60 });
+    await kvPutJson(tokenKey, null, { expirationTtl: 60 });
+    return processGuestMessageBatch(current);
+  }
+
+  await sleep(FORWARD_DELAY_SECONDS * 1000);
+
+  const activeToken = await kvGetJson(tokenKey, null);
+  if (activeToken !== token) {
+    return;
+  }
+
+  const finalBatch = asArray(await kvGetJson(batchKey, []));
+  await kvPutJson(batchKey, null, { expirationTtl: 60 });
+  await kvPutJson(tokenKey, null, { expirationTtl: 60 });
+
+  if (!finalBatch.length) return;
+  return processGuestMessageBatch(finalBatch);
+}
+
+async function processGuestMessageBatch(messages) {
+  if (!messages || !messages.length) return;
+  const firstMessage = messages[0];
+  const chatId = String(firstMessage.chat.id);
+
+  const isBlocked = await kvGetJson(`isblocked-${chatId}`, false);
+  if (isBlocked) {
+    await incrementStat('blocked-user-message');
+    return;
+  }
+
+  let blockedKeyword = '';
+  let violatingMessage = null;
+  for (const msg of messages) {
+    const kw = await findBlockedKeyword(msg);
+    if (kw) {
+      blockedKeyword = kw;
+      violatingMessage = msg;
+      break;
+    }
+  }
+
   if (blockedKeyword) {
-    const violation = await recordKeywordViolation(message, blockedKeyword);
+    const targetMsg = violatingMessage || firstMessage;
+    const violation = await recordKeywordViolation(targetMsg, blockedKeyword);
     if (AUTO_BLOCK_KEYWORD_VIOLATORS && violation.count >= KEYWORD_VIOLATION_LIMIT) {
       await kvPutJson(`isblocked-${chatId}`, true);
       await incrementStat('keyword-auto-blocked');
     }
-    await notifyKeywordBlocked(message, blockedKeyword, violation);
+    await notifyKeywordBlocked(targetMsg, blockedKeyword, violation);
     if (KEYWORD_NOTICE_TO_USER) {
       const text = violation.count >= KEYWORD_VIOLATION_LIMIT
         ? '多次发送不能转达的内容，这里暂时不能继续留言了喵。'
@@ -636,44 +708,55 @@ async function handleGuestMessage(message) {
     return;
   }
 
-  const infoReq = await sendMarkdown(ADMIN_UID, buildMessageInfo(message));
+  const infoReq = await sendMarkdown(ADMIN_UID, buildMessageInfo(firstMessage, messages.length));
   if (infoReq.ok) {
     await rememberMessageMap(infoReq.result.message_id, chatId);
   }
 
-  const copyReq = await copyMessage({
-    chat_id: ADMIN_UID,
-    from_chat_id: message.chat.id,
-    message_id: message.message_id,
-    reply_markup: adminMessageKeyboard(),
-  });
+  let deliveredAny = false;
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    const isLast = i === messages.length - 1;
+    const extra = isLast ? { reply_markup: adminMessageKeyboard() } : {};
 
-  if (copyReq.ok) {
-    await rememberMessageMap(copyReq.result.message_id, chatId);
-    await handleGuestDelivered(message);
-    return;
+    const copyReq = await copyMessage({
+      chat_id: ADMIN_UID,
+      from_chat_id: msg.chat.id,
+      message_id: msg.message_id,
+      ...extra,
+    });
+
+    if (copyReq.ok) {
+      deliveredAny = true;
+      await rememberMessageMap(copyReq.result.message_id, chatId);
+      continue;
+    }
+
+    const forwardReq = await forwardMessage({
+      chat_id: ADMIN_UID,
+      from_chat_id: msg.chat.id,
+      message_id: msg.message_id,
+    });
+
+    if (forwardReq.ok) {
+      deliveredAny = true;
+      await rememberMessageMap(forwardReq.result.message_id, chatId);
+      continue;
+    }
+
+    await sendMarkdown(
+      ADMIN_UID,
+      [
+        '*人偶转达失败*',
+        mdLine('用户ID', chatId),
+        mdLine('错误', forwardReq.description || copyReq.description || 'Unknown error'),
+      ].join('\n'),
+    );
   }
 
-  const forwardReq = await forwardMessage({
-    chat_id: ADMIN_UID,
-    from_chat_id: message.chat.id,
-    message_id: message.message_id,
-  });
-
-  if (forwardReq.ok) {
-    await rememberMessageMap(forwardReq.result.message_id, chatId);
-    await handleGuestDelivered(message);
-    return;
+  if (deliveredAny) {
+    await handleGuestDelivered(messages[messages.length - 1]);
   }
-
-  await sendMarkdown(
-    ADMIN_UID,
-    [
-      '*人偶转达失败*',
-      mdLine('用户ID', chatId),
-      mdLine('错误', forwardReq.description || copyReq.description || 'Unknown error'),
-    ].join('\n'),
-  );
 }
 
 async function handleGuestDelivered(message) {
