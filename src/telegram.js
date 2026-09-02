@@ -90,9 +90,20 @@ export function getMessageText(message) {
   return message.text || message.caption || '';
 }
 
-export function getCommand(message) {
+export function getCommand(message, botUsername = '') {
   const text = (message.text || '').trim();
-  return text.startsWith('/') ? text.split(/\s+/)[0].split('@')[0].toLowerCase() : '';
+  if (!text.startsWith('/')) return '';
+  const firstToken = text.split(/\s+/)[0];
+  const atIndex = firstToken.indexOf('@');
+  if (atIndex !== -1) {
+    const cmd = firstToken.slice(0, atIndex).toLowerCase();
+    const targetBot = firstToken.slice(atIndex + 1).toLowerCase();
+    if (botUsername && targetBot !== botUsername.toLowerCase()) {
+      return '';
+    }
+    return cmd;
+  }
+  return firstToken.toLowerCase();
 }
 
 export function getCommandArgs(message) {

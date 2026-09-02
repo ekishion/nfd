@@ -414,6 +414,24 @@ async function fetchTextOrDefault(url, fallback) {
     return fallback;
   }
 }
+async function getBotUsername() {
+  const cacheKey = 'bot-username';
+  const cached = getMemoryCache(cacheKey);
+  if (cached) return cached;
+  const token = getToken();
+  if (!token) return '';
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const data = await res.json();
+    if (data.ok && data.result?.username) {
+      setMemoryCache(cacheKey, data.result.username, 86400000);
+      return data.result.username;
+    }
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'getMe-failed', message: err.message }));
+  }
+  return '';
+}
 
 // --- MODULE: telegram.js ---
 // ==============================================================================
@@ -491,9 +509,20 @@ function mdLine(label, value) {
 function getMessageText(message) {
   return message.text || message.caption || '';
 }
-function getCommand(message) {
+function getCommand(message, botUsername = '') {
   const text = (message.text || '').trim();
-  return text.startsWith('/') ? text.split(/\s+/)[0].split('@')[0].toLowerCase() : '';
+  if (!text.startsWith('/')) return '';
+  const firstToken = text.split(/\s+/)[0];
+  const atIndex = firstToken.indexOf('@');
+  if (atIndex !== -1) {
+    const cmd = firstToken.slice(0, atIndex).toLowerCase();
+    const targetBot = firstToken.slice(atIndex + 1).toLowerCase();
+    if (botUsername && targetBot !== botUsername.toLowerCase()) {
+      return '';
+    }
+    return cmd;
+  }
+  return firstToken.toLowerCase();
 }
 function getCommandArgs(message) {
   const text = (message.text || '').trim();
@@ -1141,118 +1170,158 @@ async function handleNotify(message, config = null) {
 
 // --- MODULE: panel.js ---
 // ==============================================================================
-// src/panel.js - Interactive Inline Keyboard Control Panel (/panel)
+// src/panel.js - 3-Page Interactive Settings Control Panel
 // ==============================================================================
+
+import {
+  getRuntimeConfig,
+  updateRuntimeConfig,
+  invalidateMemoryCache,
+} from './cache.js';
+import {
+  sendMarkdown,
+  editMessageText,
+  deleteMessage,
+  answerCallbackQuery,
+} from './telegram.js';
 function buildSettingPanel(config, page = 'moderation') {
-  if (page === 'forwarding') {
-    const text = [
-      '*⚙️ 人偶控制面板（2/3 转发与通知）*',
-      '',
-      mdLine('⏱️ 转发缓冲延迟', config.delay_seconds > 0 ? `${config.delay_seconds} 秒` : '关闭 (即时转发)'),
-      mdLine('📢 拦截通知管理', config.notice_admin ? '开启' : '关闭'),
-      mdLine('💬 拦截提示客人', config.notice_user ? '开启' : '关闭'),
-      mdLine('💡 安全交易提醒', config.enable_notify ? '开启' : '关闭'),
-      '',
-      '💡 _点击下方按钮实时调节延迟或切换开关喵_',
-    ].join('\n');
+  const isModeration = page === 'moderation';
+  const isForwarding = page === 'forwarding';
+  const isDefense = page === 'defense';
 
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: `⏱️ 延迟: ${config.delay_seconds > 0 ? config.delay_seconds + 's' : '关闭'} ▾`, callback_data: 'setting:cycle:delay_seconds' },
-          { text: `💡 交易提醒: ${config.enable_notify ? '✅' : '❌'}`, callback_data: 'setting:toggle:enable_notify' },
-        ],
-        [
-          { text: `📢 通知管理: ${config.notice_admin ? '✅' : '❌'}`, callback_data: 'setting:toggle:notice_admin' },
-          { text: `💬 提示客人: ${config.notice_user ? '✅' : '❌'}`, callback_data: 'setting:toggle:notice_user' },
-        ],
-        [
-          { text: '⬅️ 🛡️ 审查设置', callback_data: 'setting:page:moderation' },
-          { text: '🔒 防护离开 ➡️', callback_data: 'setting:page:defense' },
-        ],
-        [
-          { text: '🔄 刷新状态', callback_data: 'setting:refresh:forwarding' },
-          { text: '❌ 关闭面板', callback_data: 'setting:close' },
-        ],
-      ],
-    };
-    return { text, keyboard };
+  const title = isModeration
+    ? '⚙️ *控制面板 \\- 拦截审查设置* (1/3)'
+    : isForwarding
+      ? '⚙️ *控制面板 \\- 转发与通知设置* (2/3)'
+      : '⚙️ *控制面板 \\- 防护与离开设置* (3/3)';
+
+  const lines = [title, ''];
+
+  if (isModeration) {
+    lines.push(
+      `• *要求设置用户名:* ${config.req_username ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *要求设置个人头像:* ${config.req_photo ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词多次自动拉黑:* ${config.auto_block ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词拉黑阈值:* \`${config.violation_limit} 次\``,
+      '',
+      '_点击下方按钮可直接切换状态或调整阈值：_',
+    );
+  } else if (isForwarding) {
+    const delayText = config.delay_seconds > 0 ? `${config.delay_seconds} 秒` : '关闭 (即时转发)';
+    lines.push(
+      `• *转发聚合延迟:* \`${delayText}\``,
+      `• *敏感词拦截通知管理:* ${config.notice_admin ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词拦截提示客人:* ${config.notice_user ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *定期交易安全提醒:* ${config.enable_notify ? '✅ 已开启' : '❌ 已关闭'}`,
+      '',
+      '_点击下方按钮可直接切换状态或调节延迟：_',
+    );
+  } else {
+    lines.push(
+      `• *短时防刷屏频控:* ${config.flood_protect ? '✅ 已开启 (10s/5条)' : '❌ 已关闭'}`,
+      `• *拦截危险安装包/可执行文件:* ${config.block_executables ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开模式 (自动应答):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开提示文案:* \`${(config.away_message || '外出中').slice(0, 30)}\``,
+      '',
+      '_点击下方按钮可快速切换防护或离开模式：_',
+    );
   }
 
-  if (page === 'defense') {
-    const text = [
-      '*⚙️ 人偶控制面板（3/3 防护与离开）*',
-      '',
-      mdLine('🌊 防刷屏频控', config.flood_protect ? '开启 (10s内限5条)' : '关闭'),
-      mdLine('🛡️ 拦截危险文件', config.block_executables ? '开启 (.exe/.apk等)' : '关闭'),
-      mdLine('🌙 离开自动应答', config.away_mode ? '开启' : '关闭'),
-      '',
-      '💡 _点击下方按钮切换安全防护与离开模式喵_',
-    ].join('\n');
+  const text = lines.join('\n');
 
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: `🌊 防刷频控: ${config.flood_protect ? '✅' : '❌'}`, callback_data: 'setting:toggle:flood_protect' },
-          { text: `🛡️ 危险文件: ${config.block_executables ? '✅' : '❌'}`, callback_data: 'setting:toggle:block_executables' },
-        ],
-        [
-          { text: `🌙 离开模式: ${config.away_mode ? '✅' : '❌'}`, callback_data: 'setting:toggle:away_mode' },
-        ],
-        [
-          { text: '⬅️ ⏱️ 转发通知', callback_data: 'setting:page:forwarding' },
-          { text: '🛡️ 审查设置 ➡️', callback_data: 'setting:page:moderation' },
-        ],
-        [
-          { text: '🔄 刷新状态', callback_data: 'setting:refresh:defense' },
-          { text: '❌ 关闭面板', callback_data: 'setting:close' },
-        ],
+  const navRow = [
+    { text: isModeration ? '🔘 1.拦截审查' : '1.拦截审查', callback_data: 'setting:page:moderation' },
+    { text: isForwarding ? '🔘 2.转发通知' : '2.转发通知', callback_data: 'setting:page:forwarding' },
+    { text: isDefense ? '🔘 3.防护离开' : '3.防护离开', callback_data: 'setting:page:defense' },
+  ];
+
+  let actionRows = [];
+  if (isModeration) {
+    actionRows = [
+      [
+        {
+          text: `用户名拦截: ${config.req_username ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:req_username',
+        },
+        {
+          text: `头像拦截: ${config.req_photo ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:req_photo',
+        },
       ],
-    };
-    return { text, keyboard };
+      [
+        {
+          text: `自动拉黑: ${config.auto_block ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:auto_block',
+        },
+        {
+          text: `阈值: ${config.violation_limit}次 🔄`,
+          callback_data: 'setting:cycle:violation_limit',
+        },
+      ],
+    ];
+  } else if (isForwarding) {
+    const delayLabel = config.delay_seconds > 0 ? `${config.delay_seconds}s` : '即时';
+    actionRows = [
+      [
+        {
+          text: `转发延迟: ${delayLabel} 🔄`,
+          callback_data: 'setting:cycle:delay_seconds',
+        },
+        {
+          text: `通报管理: ${config.notice_admin ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:notice_admin',
+        },
+      ],
+      [
+        {
+          text: `提示客人: ${config.notice_user ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:notice_user',
+        },
+        {
+          text: `交易提醒: ${config.enable_notify ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:enable_notify',
+        },
+      ],
+    ];
+  } else {
+    actionRows = [
+      [
+        {
+          text: `防刷频控: ${config.flood_protect ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:flood_protect',
+        },
+        {
+          text: `拦截危险文件: ${config.block_executables ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:block_executables',
+        },
+      ],
+      [
+        {
+          text: `离开模式: ${config.away_mode ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:away_mode',
+        },
+      ],
+    ];
   }
 
-  // Default Page: moderation
-  const text = [
-    '*⚙️ 人偶控制面板（1/3 拦截审查）*',
-    '',
-    mdLine('👤 要求用户名', config.req_username ? '开启' : '关闭'),
-    mdLine('🖼️ 要求个人头像', config.req_photo ? '开启' : '关闭'),
-    mdLine('🚫 违规自动拉黑', config.auto_block ? '开启' : '关闭'),
-    mdLine('🔢 自动拉黑阈值', `${config.violation_limit} 次`),
-    '',
-    '💡 _点击下方按钮实时切换开关或调节阈值喵_',
-  ].join('\n');
+  const footerRow = [
+    { text: '🔄 刷新', callback_data: `setting:refresh:${page}` },
+    { text: '❌ 关闭', callback_data: 'setting:close' },
+  ];
 
   const keyboard = {
-    inline_keyboard: [
-      [
-        { text: `👤 用户名: ${config.req_username ? '✅' : '❌'}`, callback_data: 'setting:toggle:req_username' },
-        { text: `🖼️ 头像: ${config.req_photo ? '✅' : '❌'}`, callback_data: 'setting:toggle:req_photo' },
-      ],
-      [
-        { text: `🚫 自动拉黑: ${config.auto_block ? '✅' : '❌'}`, callback_data: 'setting:toggle:auto_block' },
-        { text: `🔢 阈值: ${config.violation_limit}次 ▾`, callback_data: 'setting:cycle:violation_limit' },
-      ],
-      [
-        { text: '⏱️ 转发与通知 ➡️', callback_data: 'setting:page:forwarding' },
-        { text: '🔒 防护与离开 ➡️', callback_data: 'setting:page:defense' },
-      ],
-      [
-        { text: '🔄 刷新状态', callback_data: 'setting:refresh:moderation' },
-        { text: '❌ 关闭面板', callback_data: 'setting:close' },
-      ],
-    ],
+    inline_keyboard: [navRow, ...actionRows, footerRow],
   };
+
   return { text, keyboard };
 }
-async function sendSettingPanel(chatId, page = 'moderation') {
+async function sendSettingPanel(chatId, page = 'moderation', extra = {}) {
   const config = await getRuntimeConfig();
   const { text, keyboard } = buildSettingPanel(config, page);
-  return sendMarkdown(chatId, text, { reply_markup: keyboard });
+  return sendMarkdown(chatId, text, { reply_markup: keyboard, ...extra });
 }
 async function handleSettingCallback(callbackQuery) {
-  const adminUid = getAdminUid();
+  const chatId = callbackQuery.message?.chat?.id;
   const data = callbackQuery.data || '';
   const messageId = callbackQuery.message?.message_id;
   const parts = data.split(':');
@@ -1260,8 +1329,8 @@ async function handleSettingCallback(callbackQuery) {
   const key = parts[2];
 
   if (action === 'close') {
-    if (messageId && adminUid) {
-      await deleteMessage({ chat_id: adminUid, message_id: messageId });
+    if (messageId && chatId) {
+      await deleteMessage({ chat_id: chatId, message_id: messageId });
     }
     return answerCallbackQuery({ callback_query_id: callbackQuery.id, text: '已关闭控制面板' });
   }
@@ -1308,9 +1377,9 @@ async function handleSettingCallback(callbackQuery) {
   const updatedConfig = await getRuntimeConfig();
   const { text, keyboard } = buildSettingPanel(updatedConfig, currentPage);
 
-  if (messageId && adminUid) {
+  if (messageId && chatId) {
     await editMessageText({
-      chat_id: adminUid,
+      chat_id: chatId,
       message_id: messageId,
       text,
       reply_markup: keyboard,
@@ -1365,7 +1434,7 @@ async function rememberForceReplyPrompt(promptMessageId, guestChatId) {
   return kvPutJson(`force-reply-${promptMessageId}`, {
     guestChatId: String(guestChatId),
     createdAt: Date.now(),
-  }, { expirationTtl: MESSAGE_MAP_TTL });
+  }, { expirationTtl: 3600 });
 }
 async function clearForceReplyPrompt(promptMessageId) {
   return kvPutJson(`force-reply-${promptMessageId}`, null, { expirationTtl: 60 });
@@ -1375,43 +1444,53 @@ async function clearRepliedPrompt(message) {
   if (!promptId) return;
   const record = await kvGetJson(`force-reply-${promptId}`, null);
   if (!record) return;
-  const adminUid = getAdminUid();
-  if (adminUid) {
-    await deleteMessage({ chat_id: adminUid, message_id: promptId });
+  const chatId = message.chat?.id;
+  if (chatId) {
+    await deleteMessage({ chat_id: chatId, message_id: promptId });
   }
   await clearForceReplyPrompt(promptId);
 }
-async function handleAdminMessage(message, command) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
 
-  if (command === '/help') return sendAdminHelp();
+function getReplyContext(message) {
+  const chatId = message?.chat?.id;
+  const threadId = message?.message_thread_id;
+  const extra = {
+    reply_parameters: { message_id: message?.message_id },
+    ...(threadId ? { message_thread_id: threadId } : {}),
+  };
+  return { chatId, threadId, extra };
+}
+async function handleAdminMessage(message, command) {
+  const { chatId, threadId, extra } = getReplyContext(message);
+  if (!chatId) return;
+
+  if (command === '/help') return sendAdminHelp(chatId, extra);
   if (command === '/panel' || command === '/config') {
-    return sendSettingPanel(adminUid, 'moderation');
+    return sendSettingPanel(chatId, 'moderation', extra);
   }
-  if (command === '/stats') return sendStats();
-  if (command === '/keywords') return listKeywords();
+  if (command === '/stats') return sendStats(chatId, extra);
+  if (command === '/keywords') return listKeywords(chatId, extra);
   if (command === '/addkeyword') return addKeyword(message);
   if (command === '/delkeyword') return deleteKeyword(message);
-  if (command === '/synckeywords') return syncKeywordDb();
+  if (command === '/synckeywords') return syncKeywordDb(chatId, extra);
 
   if (command === '/block') return handleBlock(message);
   if (command === '/unblock') return handleUnBlock(message);
   if (command === '/checkblock') return checkBlock(message);
 
   if (command === '/quick' || command === '/q') return handleQuickReply(message);
-  if (command === '/quicks') return handleListQuickReplies();
+  if (command === '/quicks') return handleListQuickReplies(chatId, extra);
   if (command === '/addquick') return handleAddQuickReply(message);
   if (command === '/delquick') return handleDeleteQuickReply(message);
 
   if (command === '/away') return handleAwayMode(message);
-  if (command === '/back') return handleBackMode();
+  if (command === '/back') return handleBackMode(chatId, extra);
   if (command === '/user') return handleUserProfile(message);
   if (command === '/tag') return handleTagGuest(message);
 
   const guestChatId = await getMappedGuestId(message);
   if (!guestChatId) {
-    return sendAdminHelp('请先回复一条人偶转来的留言，或发送管理命令。');
+    return sendAdminHelp(chatId, extra, '请先回复一条人偶转来的留言，或发送管理命令。');
   }
 
   const copied = await copyMessage({
@@ -1429,14 +1508,14 @@ async function handleAdminMessage(message, command) {
       createdAt: Date.now(),
     });
     await clearRepliedPrompt(message);
-    return sendMarkdown(adminUid, escapeMarkdown(`人偶已经转达给 UID:${guestChatId} 了喵`), {
-      reply_parameters: { message_id: message.message_id },
+    return sendMarkdown(chatId, escapeMarkdown(`人偶已经转达给 UID:${guestChatId} 了喵`), {
+      ...extra,
       reply_markup: revokeReplyKeyboard(guestChatId, copied.result.message_id),
     });
   }
 
   await clearRepliedPrompt(message);
-  return sendMarkdown(adminUid, escapeMarkdown(`转达失败：${copied.description || 'Unknown error'}`));
+  return sendMarkdown(chatId, escapeMarkdown(`转达失败：${copied.description || 'Unknown error'}`), extra);
 }
 async function handleGuestAdminCommand(message, command) {
   const chatId = String(message.chat.id);
@@ -1455,14 +1534,19 @@ async function handleGuestAdminCommand(message, command) {
   }
   return sendCooldownPlainText(
     chatId,
-    `warn-command-${chatId}`,
-    '这是管理人专用的小按钮喵。请直接发送想留言的内容，人偶会帮你转达。',
+    `warn-admin-cmd-${chatId}`,
+    '这个指令是人偶管理人用的喵，请直接发送你想留言的内容即可。',
     getCommandWarningCooldownMs(),
   );
 }
 async function onCallbackQuery(callbackQuery) {
+  const fromId = String(callbackQuery.from?.id || '');
   const adminUid = getAdminUid();
-  if (String(callbackQuery.from?.id) !== adminUid) {
+  const chatId = callbackQuery.message?.chat?.id || adminUid;
+  const threadId = callbackQuery.message?.message_thread_id;
+  const extra = threadId ? { message_thread_id: threadId } : {};
+
+  if (!adminUid || fromId !== adminUid) {
     return answerCallbackQuery({
       callback_query_id: callbackQuery.id,
       text: '这是管理人专用按钮喵。',
@@ -1487,9 +1571,12 @@ async function onCallbackQuery(callbackQuery) {
       });
     }
     const prompt = await sendMarkdown(
-      adminUid,
+      chatId,
       `请回复这条消息，人偶会转达给 UID:${guestChatId} 喵。`,
-      { reply_markup: { force_reply: true, selective: true } },
+      {
+        ...extra,
+        reply_markup: { force_reply: true, selective: true },
+      },
     );
     if (prompt.ok) {
       await rememberForceReplyPrompt(prompt.result.message_id, guestChatId);
@@ -1516,7 +1603,7 @@ async function onCallbackQuery(callbackQuery) {
       kvGetJson(`keyword-violation-${guestChatId}`, null),
     ]);
     const lines = formatGuestProfile(profile || { userId: guestChatId }, tag, blocked, violation?.count);
-    await sendMarkdown(adminUid, lines);
+    await sendMarkdown(chatId, lines, extra);
     return answerCallbackQuery({ callback_query_id: callbackQuery.id });
   }
 
@@ -1535,7 +1622,7 @@ async function onCallbackQuery(callbackQuery) {
         callback_query_id: callbackQuery.id,
         text: `已将 UID:${guestChatId} 放入静音抽屉。`,
       });
-      return sendMarkdown(adminUid, escapeMarkdown(`已将 UID:${guestChatId} 放入静音抽屉喵`));
+      return sendMarkdown(chatId, escapeMarkdown(`已将 UID:${guestChatId} 放入静音抽屉喵`), extra);
     }
     if (data === 'unblock') {
       await setUserBlocked(guestChatId, false);
@@ -1543,7 +1630,7 @@ async function onCallbackQuery(callbackQuery) {
         callback_query_id: callbackQuery.id,
         text: `已将 UID:${guestChatId} 从静音抽屉取出。`,
       });
-      return sendMarkdown(adminUid, escapeMarkdown(`已将 UID:${guestChatId} 从静音抽屉取出喵`));
+      return sendMarkdown(chatId, escapeMarkdown(`已将 UID:${guestChatId} 从静音抽屉取出喵`));
     }
     if (data === 'checkblock') {
       const blocked = await isUserBlocked(guestChatId);
@@ -1582,7 +1669,7 @@ async function onCallbackQuery(callbackQuery) {
         callback_query_id: callbackQuery.id,
         text: '已成功撤回转达的消息。',
       });
-      return sendMarkdown(adminUid, escapeMarkdown(`已帮管理人撤回发给 UID:${guestChatId} 的上一条消息喵`));
+      return sendMarkdown(chatId, escapeMarkdown(`已帮管理人撤回发给 UID:${guestChatId} 的上一条消息喵`), extra);
     }
     return answerCallbackQuery({
       callback_query_id: callbackQuery.id,
@@ -1598,7 +1685,7 @@ async function onCallbackQuery(callbackQuery) {
       message_id: targetMsgId,
     });
     if (result.ok) {
-      await deleteMessage({ chat_id: adminUid, message_id: adminMessageId });
+      await deleteMessage({ chat_id: chatId, message_id: adminMessageId });
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,
         text: '已成功撤回此条消息。',
@@ -1622,111 +1709,112 @@ function resolveTargetGuestId(message, mappedGuestId) {
   return mappedGuestId;
 }
 async function handleBlock(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
   const mappedGuestId = await getMappedGuestId(message);
   const guestChatId = resolveTargetGuestId(message, mappedGuestId);
-  if (!guestChatId) return sendAdminHelp('用法：回复一条客人的留言发送 /block，或直接发送 `/block 用户ID`。');
+  if (!guestChatId) return sendAdminHelp(chatId, extra, '用法：回复一条客人的留言发送 /block，或直接发送 `/block 用户ID`。');
 
   await setUserBlocked(guestChatId, true);
-  return sendMarkdown(adminUid, escapeMarkdown(`已将 UID:${guestChatId} 放入静音抽屉喵`));
+  return sendMarkdown(chatId, escapeMarkdown(`已将 UID:${guestChatId} 放入静音抽屉喵`), extra);
 }
 async function handleUnBlock(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
   const mappedGuestId = await getMappedGuestId(message);
   const guestChatId = resolveTargetGuestId(message, mappedGuestId);
-  if (!guestChatId) return sendAdminHelp('用法：回复一条客人的留言发送 /unblock，或直接发送 `/unblock 用户ID`。');
+  if (!guestChatId) return sendAdminHelp(chatId, extra, '用法：回复一条客人的留言发送 /unblock，或直接发送 `/unblock 用户ID`。');
 
   await setUserBlocked(guestChatId, false);
-  return sendMarkdown(adminUid, escapeMarkdown(`已将 UID:${guestChatId} 从静音抽屉取出喵`));
+  return sendMarkdown(chatId, escapeMarkdown(`已将 UID:${guestChatId} 从静音抽屉取出喵`), extra);
 }
 async function checkBlock(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
   const mappedGuestId = await getMappedGuestId(message);
   const guestChatId = resolveTargetGuestId(message, mappedGuestId);
-  if (!guestChatId) return sendAdminHelp('用法：回复一条客人的留言发送 /checkblock，或直接发送 `/checkblock 用户ID`。');
+  if (!guestChatId) return sendAdminHelp(chatId, extra, '用法：回复一条客人的留言发送 /checkblock，或直接发送 `/checkblock 用户ID`。');
 
   const blocked = await isUserBlocked(guestChatId);
-  return sendMarkdown(adminUid, escapeMarkdown(`UID:${guestChatId} ${blocked ? '正在静音抽屉里' : '可以正常留言'}`));
+  return sendMarkdown(chatId, escapeMarkdown(`UID:${guestChatId} ${blocked ? '正在静音抽屉里' : '可以正常留言'}`), extra);
 }
 async function handleQuickReply(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
   const args = getCommandArgs(message).trim();
   if (!args) {
-    return sendMarkdown(adminUid, '用法：回复一条客人留言并发送 `/quick 标签`（或 `/q 标签`）');
+    return sendMarkdown(chatId, '用法：`/quick 标签名`（可简写为 `/q 标签名`）。发送 `/quicks` 可查看已存短语。', extra);
   }
 
-  const parts = args.split(/\s+/);
-  let tag = parts[0];
-  let targetUid = await getMappedGuestId(message);
-
-  if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
-    targetUid = parts[0];
-    tag = parts[1];
+  const mappedGuestId = await getMappedGuestId(message);
+  if (!mappedGuestId) {
+    return sendMarkdown(chatId, '请先回复客人的留言后再使用快捷短语转达喵。', extra);
   }
 
-  if (!targetUid) {
-    return sendMarkdown(adminUid, '请回复一条客人的留言发送快捷短语，或输入 `/quick 用户ID 标签`。');
+  const quickText = await getQuickReply(args);
+  if (!quickText) {
+    return sendMarkdown(chatId, escapeMarkdown(`未找到标签为「${args}」的快捷短语喵。使用 /addquick ${args} 内容 来添加。`), extra);
   }
 
-  const content = await getQuickReply(tag);
-  if (!content) {
-    return sendMarkdown(adminUid, escapeMarkdown(`未找到标签为「${tag}」的快捷短语喵。发送 /quicks 查看所有列表。`));
-  }
-
-  const sent = await sendPlainText(targetUid, content);
+  const sent = await sendPlainText(mappedGuestId, quickText);
   if (sent.ok) {
     await incrementStat('admin-replied');
-    return sendMarkdown(adminUid, escapeMarkdown(`已使用快捷短语「${tag}」转达给 UID:${targetUid} 喵`));
+    await kvPutJson(`last-reply-${mappedGuestId}`, {
+      chatId: String(mappedGuestId),
+      messageId: sent.result.message_id,
+      adminMessageId: message.message_id,
+      createdAt: Date.now(),
+    });
+    return sendMarkdown(chatId, escapeMarkdown(`已通过快捷短语「${args}」转达给 UID:${mappedGuestId} 喵`), {
+      ...extra,
+      reply_markup: revokeReplyKeyboard(mappedGuestId, sent.result.message_id),
+    });
   }
-  return sendMarkdown(adminUid, escapeMarkdown(`快捷回复转达失败：${sent.description || 'Unknown error'}`));
+
+  return sendMarkdown(chatId, escapeMarkdown(`快捷回复转达失败：${sent.description || 'Unknown error'}`), extra);
 }
-async function handleListQuickReplies() {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+async function handleListQuickReplies(chatId, extra = {}) {
+  if (!chatId) return;
   const list = await listQuickReplies();
   if (!list.length) {
-    return sendMarkdown(adminUid, '目前还没有添加快捷短语喵。使用 `/addquick 标签 文本内容` 添加。');
+    return sendMarkdown(chatId, '目前还没有添加快捷短语喵。使用 `/addquick 标签 文本内容` 添加。', extra);
   }
   const lines = list.map((tag) => `\\- \`${escapeMarkdown(tag)}\``);
-  return sendMarkdown(adminUid, ['*已保存的快捷短语标签*', ...lines, '', '使用 `/quick 标签` 直接回复客人喵。'].join('\n'));
+  return sendMarkdown(chatId, ['*已保存的快捷短语标签*', ...lines, '', '使用 `/quick 标签` 直接回复客人喵。'].join('\n'), extra);
 }
 async function handleAddQuickReply(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
   const args = getCommandArgs(message).trim();
   const firstSpace = args.search(/\s/);
   if (firstSpace === -1) {
-    return sendMarkdown(adminUid, '用法：`/addquick 标签 快捷文本内容`');
+    return sendMarkdown(chatId, '用法：`/addquick 标签 快捷文本内容`', extra);
   }
   const tag = args.slice(0, firstSpace).trim();
   const content = args.slice(firstSpace).trim();
   if (!tag || !content) {
-    return sendMarkdown(adminUid, '用法：`/addquick 标签 快捷文本内容`');
+    return sendMarkdown(chatId, '用法：`/addquick 标签 快捷文本内容`', extra);
   }
   await setQuickReply(tag, content);
-  return sendMarkdown(adminUid, escapeMarkdown(`已添加快捷短语「${tag}」喵！`));
+  return sendMarkdown(chatId, escapeMarkdown(`已添加快捷短语「${tag}」喵！`), extra);
 }
 async function handleDeleteQuickReply(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
   const tag = getCommandArgs(message).trim();
   if (!tag) {
-    return sendMarkdown(adminUid, '用法：`/delquick 标签`');
+    return sendMarkdown(chatId, '用法：`/delquick 标签`', extra);
   }
   await deleteQuickReply(tag);
-  return sendMarkdown(adminUid, escapeMarkdown(`已删除快捷短语「${tag}」喵。`));
+  return sendMarkdown(chatId, escapeMarkdown(`已删除快捷短语「${tag}」喵。`), extra);
 }
 async function handleAwayMode(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
   const customMsg = getCommandArgs(message).trim();
   const patch = { away_mode: true };
   if (customMsg) {
@@ -1734,22 +1822,21 @@ async function handleAwayMode(message) {
   }
   await updateRuntimeConfig(patch);
   const note = customMsg ? `已设置离开提示文案：\n「${customMsg}」` : '已开启离开自动应答模式。';
-  return sendMarkdown(adminUid, escapeMarkdown(`${note}\n发送 /back 可恢复在线状态喵。`));
+  return sendMarkdown(chatId, escapeMarkdown(`${note}\n发送 /back 可恢复在线状态喵。`), extra);
 }
-async function handleBackMode() {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+async function handleBackMode(chatId, extra = {}) {
+  if (!chatId) return;
   await updateRuntimeConfig({ away_mode: false });
-  return sendMarkdown(adminUid, '已关闭离开模式，恢复正常在线状态喵！');
+  return sendMarkdown(chatId, '已关闭离开模式，恢复正常在线状态喵！', extra);
 }
 async function handleUserProfile(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
   const mappedGuestId = await getMappedGuestId(message);
   const targetId = resolveTargetGuestId(message, mappedGuestId);
   if (!targetId) {
-    return sendMarkdown(adminUid, '用法：回复客人留言发送 `/user`，或直接发送 `/user 用户ID`。');
+    return sendMarkdown(chatId, '用法：回复客人留言发送 `/user`，或直接发送 `/user 用户ID`。', extra);
   }
 
   const [profile, tag, blocked, violation] = await Promise.all([
@@ -1760,154 +1847,171 @@ async function handleUserProfile(message) {
   ]);
 
   const lines = formatGuestProfile(profile || { userId: targetId }, tag, blocked, violation?.count);
-  return sendMarkdown(adminUid, lines);
+  return sendMarkdown(chatId, lines, extra);
 }
 async function handleTagGuest(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
   const args = getCommandArgs(message).trim();
   const mappedGuestId = await getMappedGuestId(message);
 
   let targetId = mappedGuestId;
-  let tagText = args;
+  let tagValue = args;
 
-  const parts = args.split(/\s+/);
-  if (parts.length >= 2 && /^\d+$/.test(parts[0])) {
-    targetId = parts[0];
-    tagText = parts.slice(1).join(' ');
+  const match = args.match(/^(\d+)\s+(.+)$/);
+  if (match) {
+    targetId = match[1];
+    tagValue = match[2].trim();
   }
 
   if (!targetId) {
-    return sendMarkdown(adminUid, '用法：回复一条客人留言发送 `/tag 备注名`，或发送 `/tag 用户ID 备注名`。输入 `/tag clear` 可清除。');
+    return sendMarkdown(chatId, '用法：回复客人留言发送 `/tag 备注名`，或发送 `/tag 用户ID 备注名`。输入 `/tag clear` 可清除备注。', extra);
   }
 
-  if (tagText.toLowerCase() === 'clear') {
+  if (tagValue.toLowerCase() === 'clear' || tagValue === '清除') {
     await setGuestTag(targetId, '');
-    return sendMarkdown(adminUid, escapeMarkdown(`已清除 UID:${targetId} 的备注标签喵。`));
+    return sendMarkdown(chatId, escapeMarkdown(`已清除 UID:${targetId} 的备注标签喵。`), extra);
   }
 
-  if (!tagText) {
+  if (!tagValue) {
     const currentTag = await getGuestTag(targetId);
-    return sendMarkdown(adminUid, escapeMarkdown(`UID:${targetId} 当前备注：${currentTag || '无'}`));
+    return sendMarkdown(chatId, escapeMarkdown(`UID:${targetId} 当前备注：${currentTag || '无'}`), extra);
   }
 
-  await setGuestTag(targetId, tagText);
-  return sendMarkdown(adminUid, escapeMarkdown(`已为 UID:${targetId} 设置备注标签「${tagText}」喵！`));
+  await setGuestTag(targetId, tagValue);
+  return sendMarkdown(chatId, escapeMarkdown(`已为 UID:${targetId} 设置备注标签「${tagValue}」喵！`), extra);
 }
-async function sendAdminHelp(prefix = '') {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+async function sendAdminHelp(chatId, extra = {}, prefix = '') {
   const lines = [
-    prefix && escapeMarkdown(prefix),
+    prefix ? `*${escapeMarkdown(prefix)}*\n` : '',
     '*人偶管理手册*',
-    '`/panel` 打开交互式控制面板',
-    '`/stats` 查看工作数据统计',
-    '`/user [UID]` 查看客人档案与画像',
-    '`/tag [UID] [备注]` 为客人添加备注标签',
-    '`/quick [标签]` 快捷短语回复客人',
-    '`/quicks` 查看全部快捷短语',
-    '`/addquick [标签] [内容]` 添加快捷短语',
-    '`/delquick [标签]` 删除快捷短语',
-    '`/away [说明]` 开启离开自动应答',
-    '`/back` 恢复在线状态',
-    '`/block [UID]` 静音客人',
-    '`/unblock [UID]` 解除静音',
-    '`/checkblock [UID]` 查看静音状态',
-    '`/keywords` 查看关键词与正则列表',
-    '`/addkeyword 规则` 添加关键词或正则',
-    '`/delkeyword 规则` 删除关键词或正则',
-    '`/synckeywords` 从远程同步关键词',
-    '',
-    '直接回复人偶转来的留言，就会把内容转达给原来的客人喵。',
+    '• 直接回复转达的留言即可回信给对应客人',
+    '• 发送 `/panel` 或 `/config` 可打开交互式控制面板',
+    '• 发送 `/stats` 可查看今日统计与各项拦截指标',
+    '• 发送 `/user` 或 `/user UID` 可查看客人画像与违规记录',
+    '• 发送 `/tag 备注` 或 `/tag UID 备注` 可为客户设置身份标签',
+    '• 发送 `/quick 标签`（或 `/q`）可一键调用快捷短语回复',
+    '• 发送 `/quicks` / `/addquick` / `/delquick` 管理快捷短语',
+    '• 发送 `/away [离线文案]` / `/back` 管理离开自动应答',
+    '• 发送 `/block [UID]` 可将客人加入静音抽屉',
+    '• 发送 `/unblock [UID]` 可移出静音抽屉',
+    '• 发送 `/checkblock [UID]` 可检查是否在静音抽屉',
+    '• 发送 `/keywords` 可查看当前拦截规则与正则表达式',
+    '• 发送 `/addkeyword <词或/正则/i>` 可添加屏蔽规则',
+    '• 发送 `/delkeyword <规则>` 可删除屏蔽规则',
+    '• 发送 `/synckeywords` 可从远程数据库同步规则',
   ].filter(Boolean);
-  return sendMarkdown(adminUid, lines.join('\n'));
+
+  return sendMarkdown(chatId, lines.join('\n'), extra);
 }
-async function listKeywords() {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
+async function sendStats(chatId, extra = {}) {
+  const now = new Date();
+  const dateKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+
+  const [
+    guestMessages,
+    adminReplies,
+    blockedUsers,
+    keywordBlocked,
+    autoBlocked,
+    noUsernameBlocked,
+    noPhotoBlocked,
+    executableBlocked,
+    commandWarnings,
+  ] = await Promise.all([
+    getStatCount('guest-message', dateKey),
+    getStatCount('admin-replied', dateKey),
+    getStatCount('blocked-user-message', dateKey),
+    getStatCount('keyword-blocked', dateKey),
+    getStatCount('keyword-auto-blocked', dateKey),
+    getStatCount('no-username-blocked', dateKey),
+    getStatCount('no-photo-blocked', dateKey),
+    getStatCount('executable-blocked', dateKey),
+    getStatCount('guest-command-warning', dateKey),
+  ]);
+
+  const lines = [
+    `*人偶今日运行统计* \\(${escapeMarkdown(dateKey)} UTC\\)`,
+    mdLine('收到客人留言', guestMessages),
+    mdLine('管理人已回信', adminReplies),
+    mdLine('静音名单拦截', blockedUsers),
+    mdLine('敏感词规则拦截', keywordBlocked),
+    mdLine('敏感词自动拉黑', autoBlocked),
+    mdLine('无用户名拦截', noUsernameBlocked),
+    mdLine('无头像拦截', noPhotoBlocked),
+    mdLine('危险文件拦截', executableBlocked),
+    mdLine('误触指令提醒', commandWarnings),
+  ];
+
+  return sendMarkdown(chatId, lines.join('\n'), extra);
+}
+async function listKeywords(chatId, extra = {}) {
   const rules = await getKeywordRules();
   if (!rules.length) {
-    return sendMarkdown(adminUid, '关键词小纸条还是空的喵。');
+    return sendMarkdown(chatId, '目前还没有配置敏感词屏蔽规则喵。', extra);
   }
-  const lines = rules.map((rule) => {
-    if (rule.isRegex) {
-      return `\\- \\[正则\\] \`${escapeMarkdown(rule.raw)}\``;
-    }
-    return `\\- ${escapeMarkdown(rule.raw)}`;
-  });
-  return sendMarkdown(adminUid, ['*关键词小纸条*', ...lines].join('\n'));
+  const lines = rules.map((k) => `\\- \`${escapeMarkdown(k)}\``);
+  return sendMarkdown(chatId, ['*当前生效的拦截规则清单*', ...lines].join('\n'), extra);
 }
 async function addKeyword(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
-  const keyword = getCommandArgs(message);
-  if (!keyword) return sendMarkdown(adminUid, '用法：`/addkeyword 关键词` 或 `/addkeyword /正则/i`');
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
-  if (keyword.startsWith('/') && keyword.lastIndexOf('/') > 0) {
-    const match = keyword.match(/^\/(.+)\/([a-z]*)$/i);
+  const rawArg = getCommandArgs(message).trim();
+  if (!rawArg) {
+    return sendMarkdown(chatId, '用法：`/addkeyword 违规词` 或 `/addkeyword /正则/i`', extra);
+  }
+
+  if (rawArg.startsWith('/') && rawArg.lastIndexOf('/') > 0) {
+    const match = rawArg.match(/^\/(.+)\/([a-z]*)$/i);
     if (match) {
       try {
-        new RegExp(match[1], match[2] || 'i');
+        new RegExp(match[1], match[2]);
       } catch (err) {
-        return sendMarkdown(adminUid, escapeMarkdown(`正则表达式语法错误：${err.message}`));
+        return sendMarkdown(chatId, escapeMarkdown(`正则表达式语法错误: ${err.message}`), extra);
       }
     }
   }
 
-  const current = await kvGetJson('blocked-keywords', []);
-  const next = Array.from(new Set([...asArray(current), keyword]));
-  await cachedKvPutJson('blocked-keywords', next);
-  invalidateMemoryCache('merged-keyword-rules');
-  return sendMarkdown(adminUid, escapeMarkdown(`已把「${keyword}」写进关键词小纸条`));
+  const current = await getKeywordRules();
+  if (current.includes(rawArg)) {
+    return sendMarkdown(chatId, escapeMarkdown(`规则「${rawArg}」已经在清单里了喵`), extra);
+  }
+
+  const updated = [...current, rawArg];
+  await cachedKvPutJson('keyword-rules', updated, {}, 3600000);
+  return sendMarkdown(chatId, escapeMarkdown(`已成功添加拦截规则「${rawArg}」喵！`), extra);
 }
 async function deleteKeyword(message) {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
-  const keyword = getCommandArgs(message);
-  if (!keyword) return sendMarkdown(adminUid, '用法：`/delkeyword 关键词`');
+  const { chatId, extra } = getReplyContext(message);
+  if (!chatId) return;
 
-  const current = await kvGetJson('blocked-keywords', []);
-  const next = asArray(current).filter((item) => item !== keyword);
-  await cachedKvPutJson('blocked-keywords', next);
-  invalidateMemoryCache('merged-keyword-rules');
-  return sendMarkdown(adminUid, escapeMarkdown(`已从关键词小纸条擦掉「${keyword}」`));
-}
-async function syncKeywordDb() {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
-  const fromDb = await fetchKeywordDb();
-  if (!fromDb.length) {
-    return sendMarkdown(adminUid, 'keyword\\.db 里没有关键词喵。');
+  const rawArg = getCommandArgs(message).trim();
+  if (!rawArg) {
+    return sendMarkdown(chatId, '用法：`/delkeyword 规则名称`', extra);
   }
-  const current = asArray(await kvGetJson('blocked-keywords', []));
-  const merged = Array.from(new Set([...current, ...fromDb]));
-  await cachedKvPutJson('blocked-keywords', merged);
-  invalidateMemoryCache('merged-keyword-rules');
-  const added = merged.length - current.length;
-  return sendMarkdown(
-    adminUid,
-    escapeMarkdown(`已从 keyword.db 同步 ${fromDb.length} 个关键词，新增 ${added} 个，小纸条现共 ${merged.length} 个`),
-  );
+
+  const current = await getKeywordRules();
+  const index = current.indexOf(rawArg);
+  if (index === -1) {
+    return sendMarkdown(chatId, escapeMarkdown(`在清单里没有找到规则「${rawArg}」喵`), extra);
+  }
+
+  current.splice(index, 1);
+  await cachedKvPutJson('keyword-rules', current, {}, 3600000);
+  return sendMarkdown(chatId, escapeMarkdown(`已将规则「${rawArg}」从清单中移除喵`), extra);
 }
-async function sendStats() {
-  const adminUid = getAdminUid();
-  if (!adminUid) return;
-  const names = [
-    'guest-message',
-    'admin-replied',
-    'keyword-blocked',
-    'keyword-auto-blocked',
-    'no-username-blocked',
-    'no-photo-blocked',
-    'flood-blocked',
-    'executable-blocked',
-    'guest-command-warning',
-    'blocked-user-message',
-  ];
-  const values = await Promise.all(names.map((name) => getStatCount(name)));
-  const lines = names.map((name, index) => mdLine(name, String(values[index] ?? 0)));
-  return sendMarkdown(adminUid, ['*人偶工作记录*', ...lines].join('\n'));
+async function syncKeywordDb(chatId, extra = {}) {
+  if (!chatId) return;
+  const remote = await fetchKeywordDb();
+  if (!remote || !remote.length) {
+    return sendMarkdown(chatId, '未能从远程数据库获取到关键词规则喵。', extra);
+  }
+  const current = await getKeywordRules();
+  const merged = Array.from(new Set([...current, ...remote]));
+  await cachedKvPutJson('keyword-rules', merged, {}, 3600000);
+  return sendMarkdown(chatId, escapeMarkdown(`已完成同步，当前共有 ${merged.length} 条拦截规则生效喵！`), extra);
 }
 
 // --- MODULE: index.js ---
@@ -1982,6 +2086,10 @@ async function onUpdate(update) {
 async function onMessage(message) {
   if (!message?.chat?.id) return;
 
+  const botUsername = await getBotUsername();
+  const command = getCommand(message, botUsername);
+  const isGroup = Boolean(message.chat.type && message.chat.type !== 'private');
+
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
   const isAdmin = Boolean(
@@ -1989,8 +2097,32 @@ async function onMessage(message) {
     (forwardChatId && String(message.chat.id) === forwardChatId) ||
     (adminUid && String(message.from?.id) === adminUid),
   );
-  const command = getCommand(message);
 
+  // Group / Supergroup / Channel processing
+  if (isGroup) {
+    if (!isAdmin) {
+      return; // Regular chatter by other group members - ignore
+    }
+    if (command === '/start') {
+      return sendMarkdown(
+        message.chat.id,
+        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+        message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
+      );
+    }
+    if (command) {
+      return handleAdminMessage(message, command);
+    }
+    // Check if replying to a guest or typing inside a guest forum topic
+    const guestChatId = await getMappedGuestId(message);
+    if (guestChatId) {
+      return handleAdminMessage(message, '');
+    }
+    // Regular group chatter, talking to other users, or @ other bots - silently ignore!
+    return;
+  }
+
+  // Private chat processing
   if (command === '/start') {
     if (isAdmin) {
       return sendMarkdown(
@@ -2028,19 +2160,10 @@ async function registerWebhook(requestUrl) {
   return new Response(r.ok ? 'Ok' : JSON.stringify(r, null, 2));
 }
 async function unRegisterWebhook() {
-  const r = await fetch(apiUrl('deleteWebhook'), {
+  const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ drop_pending_updates: true }),
+    body: JSON.stringify({ url: '' }),
   }).then((response) => response.json());
   return new Response(r.ok ? 'Ok' : JSON.stringify(r, null, 2));
-}
-
-// Cloudflare Workers Native Module Export (Used by Cloudflare Git Integration & Wrangler)
-
-// Legacy Service Worker Syntax Fallback (Used when pasted directly into Cloudflare Quick Edit)
-if (typeof addEventListener === 'function') {
-  addEventListener('fetch', (event) => {
-    event.respondWith(handleFetch(event.request, null, event));
-  });
 }

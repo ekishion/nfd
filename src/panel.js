@@ -1,123 +1,159 @@
 // ==============================================================================
-// src/panel.js - Interactive Inline Keyboard Control Panel (/panel)
+// src/panel.js - 3-Page Interactive Settings Control Panel
 // ==============================================================================
 
-import { getAdminUid } from './config.js';
-import { getRuntimeConfig, updateRuntimeConfig, invalidateMemoryCache } from './cache.js';
-import { sendMarkdown, editMessageText, deleteMessage, answerCallbackQuery, mdLine } from './telegram.js';
+import {
+  getRuntimeConfig,
+  updateRuntimeConfig,
+  invalidateMemoryCache,
+} from './cache.js';
+import {
+  sendMarkdown,
+  editMessageText,
+  deleteMessage,
+  answerCallbackQuery,
+} from './telegram.js';
 
 export function buildSettingPanel(config, page = 'moderation') {
-  if (page === 'forwarding') {
-    const text = [
-      '*⚙️ 人偶控制面板（2/3 转发与通知）*',
-      '',
-      mdLine('⏱️ 转发缓冲延迟', config.delay_seconds > 0 ? `${config.delay_seconds} 秒` : '关闭 (即时转发)'),
-      mdLine('📢 拦截通知管理', config.notice_admin ? '开启' : '关闭'),
-      mdLine('💬 拦截提示客人', config.notice_user ? '开启' : '关闭'),
-      mdLine('💡 安全交易提醒', config.enable_notify ? '开启' : '关闭'),
-      '',
-      '💡 _点击下方按钮实时调节延迟或切换开关喵_',
-    ].join('\n');
+  const isModeration = page === 'moderation';
+  const isForwarding = page === 'forwarding';
+  const isDefense = page === 'defense';
 
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: `⏱️ 延迟: ${config.delay_seconds > 0 ? config.delay_seconds + 's' : '关闭'} ▾`, callback_data: 'setting:cycle:delay_seconds' },
-          { text: `💡 交易提醒: ${config.enable_notify ? '✅' : '❌'}`, callback_data: 'setting:toggle:enable_notify' },
-        ],
-        [
-          { text: `📢 通知管理: ${config.notice_admin ? '✅' : '❌'}`, callback_data: 'setting:toggle:notice_admin' },
-          { text: `💬 提示客人: ${config.notice_user ? '✅' : '❌'}`, callback_data: 'setting:toggle:notice_user' },
-        ],
-        [
-          { text: '⬅️ 🛡️ 审查设置', callback_data: 'setting:page:moderation' },
-          { text: '🔒 防护离开 ➡️', callback_data: 'setting:page:defense' },
-        ],
-        [
-          { text: '🔄 刷新状态', callback_data: 'setting:refresh:forwarding' },
-          { text: '❌ 关闭面板', callback_data: 'setting:close' },
-        ],
-      ],
-    };
-    return { text, keyboard };
+  const title = isModeration
+    ? '⚙️ *控制面板 \\- 拦截审查设置* (1/3)'
+    : isForwarding
+      ? '⚙️ *控制面板 \\- 转发与通知设置* (2/3)'
+      : '⚙️ *控制面板 \\- 防护与离开设置* (3/3)';
+
+  const lines = [title, ''];
+
+  if (isModeration) {
+    lines.push(
+      `• *要求设置用户名:* ${config.req_username ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *要求设置个人头像:* ${config.req_photo ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词多次自动拉黑:* ${config.auto_block ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词拉黑阈值:* \`${config.violation_limit} 次\``,
+      '',
+      '_点击下方按钮可直接切换状态或调整阈值：_',
+    );
+  } else if (isForwarding) {
+    const delayText = config.delay_seconds > 0 ? `${config.delay_seconds} 秒` : '关闭 (即时转发)';
+    lines.push(
+      `• *转发聚合延迟:* \`${delayText}\``,
+      `• *敏感词拦截通知管理:* ${config.notice_admin ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词拦截提示客人:* ${config.notice_user ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *定期交易安全提醒:* ${config.enable_notify ? '✅ 已开启' : '❌ 已关闭'}`,
+      '',
+      '_点击下方按钮可直接切换状态或调节延迟：_',
+    );
+  } else {
+    lines.push(
+      `• *短时防刷屏频控:* ${config.flood_protect ? '✅ 已开启 (10s/5条)' : '❌ 已关闭'}`,
+      `• *拦截危险安装包/可执行文件:* ${config.block_executables ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开模式 (自动应答):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开提示文案:* \`${(config.away_message || '外出中').slice(0, 30)}\``,
+      '',
+      '_点击下方按钮可快速切换防护或离开模式：_',
+    );
   }
 
-  if (page === 'defense') {
-    const text = [
-      '*⚙️ 人偶控制面板（3/3 防护与离开）*',
-      '',
-      mdLine('🌊 防刷屏频控', config.flood_protect ? '开启 (10s内限5条)' : '关闭'),
-      mdLine('🛡️ 拦截危险文件', config.block_executables ? '开启 (.exe/.apk等)' : '关闭'),
-      mdLine('🌙 离开自动应答', config.away_mode ? '开启' : '关闭'),
-      '',
-      '💡 _点击下方按钮切换安全防护与离开模式喵_',
-    ].join('\n');
+  const text = lines.join('\n');
 
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: `🌊 防刷频控: ${config.flood_protect ? '✅' : '❌'}`, callback_data: 'setting:toggle:flood_protect' },
-          { text: `🛡️ 危险文件: ${config.block_executables ? '✅' : '❌'}`, callback_data: 'setting:toggle:block_executables' },
-        ],
-        [
-          { text: `🌙 离开模式: ${config.away_mode ? '✅' : '❌'}`, callback_data: 'setting:toggle:away_mode' },
-        ],
-        [
-          { text: '⬅️ ⏱️ 转发通知', callback_data: 'setting:page:forwarding' },
-          { text: '🛡️ 审查设置 ➡️', callback_data: 'setting:page:moderation' },
-        ],
-        [
-          { text: '🔄 刷新状态', callback_data: 'setting:refresh:defense' },
-          { text: '❌ 关闭面板', callback_data: 'setting:close' },
-        ],
+  const navRow = [
+    { text: isModeration ? '🔘 1.拦截审查' : '1.拦截审查', callback_data: 'setting:page:moderation' },
+    { text: isForwarding ? '🔘 2.转发通知' : '2.转发通知', callback_data: 'setting:page:forwarding' },
+    { text: isDefense ? '🔘 3.防护离开' : '3.防护离开', callback_data: 'setting:page:defense' },
+  ];
+
+  let actionRows = [];
+  if (isModeration) {
+    actionRows = [
+      [
+        {
+          text: `用户名拦截: ${config.req_username ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:req_username',
+        },
+        {
+          text: `头像拦截: ${config.req_photo ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:req_photo',
+        },
       ],
-    };
-    return { text, keyboard };
+      [
+        {
+          text: `自动拉黑: ${config.auto_block ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:auto_block',
+        },
+        {
+          text: `阈值: ${config.violation_limit}次 🔄`,
+          callback_data: 'setting:cycle:violation_limit',
+        },
+      ],
+    ];
+  } else if (isForwarding) {
+    const delayLabel = config.delay_seconds > 0 ? `${config.delay_seconds}s` : '即时';
+    actionRows = [
+      [
+        {
+          text: `转发延迟: ${delayLabel} 🔄`,
+          callback_data: 'setting:cycle:delay_seconds',
+        },
+        {
+          text: `通报管理: ${config.notice_admin ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:notice_admin',
+        },
+      ],
+      [
+        {
+          text: `提示客人: ${config.notice_user ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:notice_user',
+        },
+        {
+          text: `交易提醒: ${config.enable_notify ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:enable_notify',
+        },
+      ],
+    ];
+  } else {
+    actionRows = [
+      [
+        {
+          text: `防刷频控: ${config.flood_protect ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:flood_protect',
+        },
+        {
+          text: `拦截危险文件: ${config.block_executables ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:block_executables',
+        },
+      ],
+      [
+        {
+          text: `离开模式: ${config.away_mode ? '✅ 开' : '❌ 关'}`,
+          callback_data: 'setting:toggle:away_mode',
+        },
+      ],
+    ];
   }
 
-  // Default Page: moderation
-  const text = [
-    '*⚙️ 人偶控制面板（1/3 拦截审查）*',
-    '',
-    mdLine('👤 要求用户名', config.req_username ? '开启' : '关闭'),
-    mdLine('🖼️ 要求个人头像', config.req_photo ? '开启' : '关闭'),
-    mdLine('🚫 违规自动拉黑', config.auto_block ? '开启' : '关闭'),
-    mdLine('🔢 自动拉黑阈值', `${config.violation_limit} 次`),
-    '',
-    '💡 _点击下方按钮实时切换开关或调节阈值喵_',
-  ].join('\n');
+  const footerRow = [
+    { text: '🔄 刷新', callback_data: `setting:refresh:${page}` },
+    { text: '❌ 关闭', callback_data: 'setting:close' },
+  ];
 
   const keyboard = {
-    inline_keyboard: [
-      [
-        { text: `👤 用户名: ${config.req_username ? '✅' : '❌'}`, callback_data: 'setting:toggle:req_username' },
-        { text: `🖼️ 头像: ${config.req_photo ? '✅' : '❌'}`, callback_data: 'setting:toggle:req_photo' },
-      ],
-      [
-        { text: `🚫 自动拉黑: ${config.auto_block ? '✅' : '❌'}`, callback_data: 'setting:toggle:auto_block' },
-        { text: `🔢 阈值: ${config.violation_limit}次 ▾`, callback_data: 'setting:cycle:violation_limit' },
-      ],
-      [
-        { text: '⏱️ 转发与通知 ➡️', callback_data: 'setting:page:forwarding' },
-        { text: '🔒 防护与离开 ➡️', callback_data: 'setting:page:defense' },
-      ],
-      [
-        { text: '🔄 刷新状态', callback_data: 'setting:refresh:moderation' },
-        { text: '❌ 关闭面板', callback_data: 'setting:close' },
-      ],
-    ],
+    inline_keyboard: [navRow, ...actionRows, footerRow],
   };
+
   return { text, keyboard };
 }
 
-export async function sendSettingPanel(chatId, page = 'moderation') {
+export async function sendSettingPanel(chatId, page = 'moderation', extra = {}) {
   const config = await getRuntimeConfig();
   const { text, keyboard } = buildSettingPanel(config, page);
-  return sendMarkdown(chatId, text, { reply_markup: keyboard });
+  return sendMarkdown(chatId, text, { reply_markup: keyboard, ...extra });
 }
 
 export async function handleSettingCallback(callbackQuery) {
-  const adminUid = getAdminUid();
+  const chatId = callbackQuery.message?.chat?.id;
   const data = callbackQuery.data || '';
   const messageId = callbackQuery.message?.message_id;
   const parts = data.split(':');
@@ -125,8 +161,8 @@ export async function handleSettingCallback(callbackQuery) {
   const key = parts[2];
 
   if (action === 'close') {
-    if (messageId && adminUid) {
-      await deleteMessage({ chat_id: adminUid, message_id: messageId });
+    if (messageId && chatId) {
+      await deleteMessage({ chat_id: chatId, message_id: messageId });
     }
     return answerCallbackQuery({ callback_query_id: callbackQuery.id, text: '已关闭控制面板' });
   }
@@ -173,9 +209,9 @@ export async function handleSettingCallback(callbackQuery) {
   const updatedConfig = await getRuntimeConfig();
   const { text, keyboard } = buildSettingPanel(updatedConfig, currentPage);
 
-  if (messageId && adminUid) {
+  if (messageId && chatId) {
     await editMessageText({
-      chat_id: adminUid,
+      chat_id: chatId,
       message_id: messageId,
       text,
       reply_markup: keyboard,

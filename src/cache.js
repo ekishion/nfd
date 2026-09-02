@@ -304,3 +304,22 @@ export async function fetchTextOrDefault(url, fallback) {
     return fallback;
   }
 }
+
+export async function getBotUsername() {
+  const cacheKey = 'bot-username';
+  const cached = getMemoryCache(cacheKey);
+  if (cached) return cached;
+  const token = getToken();
+  if (!token) return '';
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const data = await res.json();
+    if (data.ok && data.result?.username) {
+      setMemoryCache(cacheKey, data.result.username, 86400000);
+      return data.result.username;
+    }
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'getMe-failed', message: err.message }));
+  }
+  return '';
+}

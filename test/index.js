@@ -21,9 +21,20 @@ console.log('MarkdownV2 escaping handles all 18 special characters');
 // ------------------------------------------------------------------------------
 // Test 2: Command & Argument Parsing
 // ------------------------------------------------------------------------------
-function getCommand(text = '') {
+function getCommand(text = '', botUsername = '') {
   const trimmed = text.trim();
-  return trimmed.startsWith('/') ? trimmed.split(/\s+/)[0].split('@')[0].toLowerCase() : '';
+  if (!trimmed.startsWith('/')) return '';
+  const firstToken = trimmed.split(/\s+/)[0];
+  const atIndex = firstToken.indexOf('@');
+  if (atIndex !== -1) {
+    const cmd = firstToken.slice(0, atIndex).toLowerCase();
+    const targetBot = firstToken.slice(atIndex + 1).toLowerCase();
+    if (botUsername && targetBot !== botUsername.toLowerCase()) {
+      return '';
+    }
+    return cmd;
+  }
+  return firstToken.toLowerCase();
 }
 
 function getCommandArgs(text = '') {
@@ -32,12 +43,14 @@ function getCommandArgs(text = '') {
   return firstSpace === -1 ? '' : trimmed.slice(firstSpace).trim();
 }
 
-assert.strictEqual(getCommand('/panel'), '/panel');
-assert.strictEqual(getCommand('/block@MyBot 12345'), '/block');
+assert.strictEqual(getCommand('/panel', 'mybot'), '/panel');
+assert.strictEqual(getCommand('/panel@mybot', 'mybot'), '/panel');
+assert.strictEqual(getCommand('/panel@otherbot', 'mybot'), '');
+assert.strictEqual(getCommand('@username_to_id_bot', 'mybot'), '');
 assert.strictEqual(getCommandArgs('/block 12345678'), '12345678');
 assert.strictEqual(getCommandArgs('/addkeyword 换汇 代充'), '换汇 代充');
 assert.strictEqual(getCommandArgs('/stats'), '');
-console.log('Command and argument parser works accurately');
+console.log('Command and argument parser with bot target filtering works accurately');
 
 // ------------------------------------------------------------------------------
 // Test 3: Direct User ID vs Reply Mapping Resolution
@@ -390,4 +403,32 @@ assert.strictEqual(route2.alertChat, '-100987654');
 assert.strictEqual(route2.alertThread, 77);
 console.log('Dual-channel alert and conversation routing verified');
 
-console.log('\nAll 14 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 15: Group Chatter & Mention Isolation
+// ------------------------------------------------------------------------------
+function shouldProcessGroupMessage({ isGroup, isAdmin, command, hasMappedGuest }) {
+  if (!isGroup) return true; // private chat
+  if (!isAdmin) return false;
+  if (command) return true;
+  if (hasMappedGuest) return true;
+  return false; // regular chatter, mentions, other bots
+}
+
+assert.strictEqual(shouldProcessGroupMessage({ isGroup: true, isAdmin: true, command: '', hasMappedGuest: false }), false);
+assert.strictEqual(shouldProcessGroupMessage({ isGroup: true, isAdmin: true, command: '/panel', hasMappedGuest: false }), true);
+assert.strictEqual(shouldProcessGroupMessage({ isGroup: true, isAdmin: true, command: '', hasMappedGuest: true }), true);
+assert.strictEqual(shouldProcessGroupMessage({ isGroup: true, isAdmin: false, command: '/start', hasMappedGuest: false }), false);
+console.log('Group chatter isolation verified');
+
+// ------------------------------------------------------------------------------
+// Test 16: Non-NFD Bot Command Filtering in Group Chats
+// ------------------------------------------------------------------------------
+const myBot = 'nfd_bot';
+assert.strictEqual(getCommand('/start@username_to_id_bot', myBot), '');
+assert.strictEqual(getCommand('/id@username_to_id_bot', myBot), '');
+assert.strictEqual(getCommand('/panel@nfd_bot', myBot), '/panel');
+assert.strictEqual(getCommand('/panel', myBot), '/panel');
+assert.strictEqual(getCommand('你好 @username_to_id_bot 查下id', myBot), '');
+console.log('Non-NFD bot commands and mentions properly ignored');
+
+console.log('\nAll 16 test suites passed with 0 errors!\n');

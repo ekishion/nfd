@@ -12,9 +12,9 @@ import {
   getForwardChatId,
   getStartMsgUrl,
 } from './config.js';
-import { fetchTextOrDefault, isDuplicateUpdate } from './cache.js';
+import { fetchTextOrDefault, isDuplicateUpdate, getBotUsername } from './cache.js';
 import { apiUrl, sendMarkdown, getCommand, formatStartMessage } from './telegram.js';
-import { handleGuestMessage } from './pipeline.js';
+import { handleGuestMessage, getMappedGuestId } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
 
 export async function handleFetch(request, env = null, ctx = null) {
@@ -77,6 +77,10 @@ export async function onUpdate(update) {
 export async function onMessage(message) {
   if (!message?.chat?.id) return;
 
+  const botUsername = await getBotUsername();
+  const command = getCommand(message, botUsername);
+  const isGroup = Boolean(message.chat.type && message.chat.type !== 'private');
+
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
   const isAdmin = Boolean(
@@ -84,8 +88,32 @@ export async function onMessage(message) {
     (forwardChatId && String(message.chat.id) === forwardChatId) ||
     (adminUid && String(message.from?.id) === adminUid),
   );
-  const command = getCommand(message);
 
+  // Group / Supergroup / Channel processing
+  if (isGroup) {
+    if (!isAdmin) {
+      return; // Regular chatter by other group members - ignore
+    }
+    if (command === '/start') {
+      return sendMarkdown(
+        message.chat.id,
+        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+        message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
+      );
+    }
+    if (command) {
+      return handleAdminMessage(message, command);
+    }
+    // Check if replying to a guest or typing inside a guest forum topic
+    const guestChatId = await getMappedGuestId(message);
+    if (guestChatId) {
+      return handleAdminMessage(message, '');
+    }
+    // Regular group chatter, talking to other users, or @ other bots - silently ignore!
+    return;
+  }
+
+  // Private chat processing
   if (command === '/start') {
     if (isAdmin) {
       return sendMarkdown(
@@ -125,24 +153,16 @@ export async function registerWebhook(requestUrl) {
 }
 
 export async function unRegisterWebhook() {
-  const r = await fetch(apiUrl('deleteWebhook'), {
+  const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ drop_pending_updates: true }),
+    body: JSON.stringify({ url: '' }),
   }).then((response) => response.json());
   return new Response(r.ok ? 'Ok' : JSON.stringify(r, null, 2));
 }
 
-// Cloudflare Workers Native Module Export (Used by Cloudflare Git Integration & Wrangler)
 export default {
   async fetch(request, env, ctx) {
     return handleFetch(request, env, ctx);
   },
 };
-
-// Legacy Service Worker Syntax Fallback (Used when pasted directly into Cloudflare Quick Edit)
-if (typeof addEventListener === 'function') {
-  addEventListener('fetch', (event) => {
-    event.respondWith(handleFetch(event.request, null, event));
-  });
-}
