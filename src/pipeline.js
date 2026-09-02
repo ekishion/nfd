@@ -168,25 +168,25 @@ export async function processGuestMessageBatch(messages, config = null) {
     return;
   }
 
-  let blockedKeyword = '';
+  let blockedResult = null;
   let violatingMessage = null;
   for (const msg of messages) {
-    const kw = await findBlockedKeyword(msg);
-    if (kw) {
-      blockedKeyword = kw;
+    const match = await findBlockedKeyword(msg);
+    if (match && match.matched) {
+      blockedResult = match;
       violatingMessage = msg;
       break;
     }
   }
 
-  if (blockedKeyword) {
+  if (blockedResult) {
     const targetMsg = violatingMessage || firstMessage;
-    const violation = await recordKeywordViolation(targetMsg, blockedKeyword);
+    const violation = await recordKeywordViolation(targetMsg, blockedResult.rule);
     if (config.auto_block && violation.count >= config.violation_limit) {
       await setUserBlocked(chatId, true);
       await incrementStat('keyword-auto-blocked');
     }
-    await notifyKeywordBlocked(targetMsg, blockedKeyword, violation, config);
+    await notifyKeywordBlocked(targetMsg, blockedResult, violation, config);
     if (config.notice_user) {
       const text = violation.count >= config.violation_limit
         ? '多次发送不能转达的内容，这里暂时不能继续留言了喵。'

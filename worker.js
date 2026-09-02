@@ -422,7 +422,7 @@ function revokeReplyKeyboard(guestChatId, messageId) {
 
 // --- MODULE: moderation.js ---
 // ==============================================================================
-// src/moderation.js - Moderation Engine (Blacklist, Username, Avatar & Keywords)
+// src/moderation.js - Moderation Engine (Blacklist, Username, Avatar & Regex Keywords)
 // ==============================================================================
 import {
   cachedKvGetJson,
@@ -434,6 +434,50 @@ import {
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
+function normalizeMessageText(text = '') {
+  if (!text || typeof text !== 'string') return '';
+  return text
+    // Strip zero-width, invisible & direction marks
+    .replace(/[\u200B-\u200F\uFEFF\u2060\u180E\u00AD]/g, '')
+    // Convert full-width ASCII to standard half-width
+    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    // Convert full-width space to standard space
+    .replace(/\u3000/g, ' ')
+    // Normalize multi-whitespace
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function parseKeywordRule(rawRule) {
+  const raw = String(rawRule || '').trim();
+  if (!raw) return null;
+
+  const regexMatch = raw.match(/^\/(.+)\/([a-z]*)$/i);
+  if (regexMatch) {
+    const [, pattern, flags] = regexMatch;
+    try {
+      const safeFlags = flags.includes('i') ? flags : `${flags}i`;
+      const regex = new RegExp(pattern, safeFlags);
+      return {
+        raw,
+        isRegex: true,
+        regex,
+      };
+    } catch (err) {
+      console.log(JSON.stringify({ error: 'invalid-regex-rule', raw, message: err.message }));
+      return {
+        raw,
+        isRegex: false,
+        text: raw.toLowerCase(),
+      };
+    }
+  }
+
+  return {
+    raw,
+    isRegex: false,
+    text: raw.toLowerCase(),
+  };
+}
 async function isUserBlocked(chatId) {
   return cachedKvGetJson(`isblocked-${chatId}`, 60000, false);
 }
@@ -468,22 +512,48 @@ async function checkUserHasPhoto(userId) {
   }
 }
 async function getKeywordRules() {
-  const cacheKey = 'merged-keywords';
+  const cacheKey = 'merged-keyword-rules';
   const cached = getMemoryCache(cacheKey);
   if (cached) return cached;
 
   const fromKv = await cachedKvGetJson('blocked-keywords', 120000, []);
   const fromDb = await fetchKeywordDb();
-  const rules = Array.from(new Set([...fromDb, ...asArray(fromKv)]));
-  setMemoryCache(cacheKey, rules, 60000);
-  return rules;
+  const rawList = Array.from(new Set([...fromDb, ...asArray(fromKv)]));
+
+  const parsedRules = rawList.map(parseKeywordRule).filter(Boolean);
+  setMemoryCache(cacheKey, parsedRules, 60000);
+  return parsedRules;
 }
 async function findBlockedKeyword(message) {
-  const content = getMessageText(message).toLowerCase();
-  if (!content) return '';
+  const rawContent = getMessageText(message);
+  if (!rawContent) return null;
 
+  const normalized = normalizeMessageText(rawContent);
+  const lowerNormalized = normalized.toLowerCase();
   const rules = await getKeywordRules();
-  return rules.find((keyword) => content.includes(keyword.toLowerCase())) || '';
+
+  for (const rule of rules) {
+    if (rule.isRegex && rule.regex) {
+      const match = normalized.match(rule.regex);
+      if (match) {
+        return {
+          matched: true,
+          rule: rule.raw,
+          snippet: match[0],
+        };
+      }
+    } else if (rule.text) {
+      if (lowerNormalized.includes(rule.text)) {
+        return {
+          matched: true,
+          rule: rule.raw,
+          snippet: rule.raw,
+        };
+      }
+    }
+  }
+
+  return null;
 }
 async function recordKeywordViolation(message, keyword) {
   const chatId = String(message.chat.id);
@@ -501,19 +571,30 @@ async function recordKeywordViolation(message, keyword) {
   await kvPutJson(key, record, { expirationTtl: ttl });
   return record;
 }
-async function notifyKeywordBlocked(message, keyword, violation, config) {
+async function notifyKeywordBlocked(message, matchResult, violation, config) {
   await incrementStat('keyword-blocked');
   if (!config.notice_admin) return null;
   const adminUid = getAdminUid();
   if (!adminUid) return null;
 
+  const ruleName = typeof matchResult === 'string' ? matchResult : matchResult.rule;
+  const snippet = typeof matchResult === 'object' && matchResult?.snippet ? matchResult.snippet : '';
+
   const lines = [
     '*人偶拦下了一条留言*',
-    mdLine('关键词', keyword),
+    mdLine('触发规则', ruleName),
+  ];
+
+  if (snippet && snippet !== ruleName) {
+    lines.push(mdLine('命中切片', snippet));
+  }
+
+  lines.push(
     mdLine('累计次数', violation.count),
     mdLine('用户ID', message.chat.id),
     mdLine('客人', buildUserName(message.from || {})),
-  ];
+  );
+
   if (config.auto_block && violation.count >= config.violation_limit) {
     lines.push(mdLine('处理', '已自动拉入黑名单'));
   }
@@ -685,25 +766,25 @@ async function processGuestMessageBatch(messages, config = null) {
     return;
   }
 
-  let blockedKeyword = '';
+  let blockedResult = null;
   let violatingMessage = null;
   for (const msg of messages) {
-    const kw = await findBlockedKeyword(msg);
-    if (kw) {
-      blockedKeyword = kw;
+    const match = await findBlockedKeyword(msg);
+    if (match && match.matched) {
+      blockedResult = match;
       violatingMessage = msg;
       break;
     }
   }
 
-  if (blockedKeyword) {
+  if (blockedResult) {
     const targetMsg = violatingMessage || firstMessage;
-    const violation = await recordKeywordViolation(targetMsg, blockedKeyword);
+    const violation = await recordKeywordViolation(targetMsg, blockedResult.rule);
     if (config.auto_block && violation.count >= config.violation_limit) {
       await setUserBlocked(chatId, true);
       await incrementStat('keyword-auto-blocked');
     }
-    await notifyKeywordBlocked(targetMsg, blockedKeyword, violation, config);
+    await notifyKeywordBlocked(targetMsg, blockedResult, violation, config);
     if (config.notice_user) {
       const text = violation.count >= config.violation_limit
         ? '多次发送不能转达的内容，这里暂时不能继续留言了喵。'
@@ -1223,25 +1304,39 @@ async function sendAdminHelp(prefix = '') {
 async function listKeywords() {
   const adminUid = getAdminUid();
   if (!adminUid) return;
-  const keywords = await getKeywordRules();
-  if (!keywords.length) {
+  const rules = await getKeywordRules();
+  if (!rules.length) {
     return sendMarkdown(adminUid, '关键词小纸条还是空的喵。');
   }
-  return sendMarkdown(
-    adminUid,
-    ['*关键词小纸条*', ...keywords.map((keyword) => `\\- ${escapeMarkdown(keyword)}`)].join('\n'),
-  );
+  const lines = rules.map((rule) => {
+    if (rule.isRegex) {
+      return `\\- \\[正则\\] \`${escapeMarkdown(rule.raw)}\``;
+    }
+    return `\\- ${escapeMarkdown(rule.raw)}`;
+  });
+  return sendMarkdown(adminUid, ['*关键词小纸条*', ...lines].join('\n'));
 }
 async function addKeyword(message) {
   const adminUid = getAdminUid();
   if (!adminUid) return;
   const keyword = getCommandArgs(message);
-  if (!keyword) return sendMarkdown(adminUid, '用法：`/addkeyword 关键词`');
+  if (!keyword) return sendMarkdown(adminUid, '用法：`/addkeyword 关键词` 或 `/addkeyword /正则/i`');
+
+  if (keyword.startsWith('/') && keyword.lastIndexOf('/') > 0) {
+    const match = keyword.match(/^\/(.+)\/([a-z]*)$/i);
+    if (match) {
+      try {
+        new RegExp(match[1], match[2] || 'i');
+      } catch (err) {
+        return sendMarkdown(adminUid, escapeMarkdown(`正则表达式语法错误：${err.message}`));
+      }
+    }
+  }
 
   const current = await kvGetJson('blocked-keywords', []);
   const next = Array.from(new Set([...asArray(current), keyword]));
   await cachedKvPutJson('blocked-keywords', next);
-  invalidateMemoryCache('merged-keywords');
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(adminUid, escapeMarkdown(`已把「${keyword}」写进关键词小纸条`));
 }
 async function deleteKeyword(message) {
@@ -1253,7 +1348,7 @@ async function deleteKeyword(message) {
   const current = await kvGetJson('blocked-keywords', []);
   const next = asArray(current).filter((item) => item !== keyword);
   await cachedKvPutJson('blocked-keywords', next);
-  invalidateMemoryCache('merged-keywords');
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(adminUid, escapeMarkdown(`已从关键词小纸条擦掉「${keyword}」`));
 }
 async function syncKeywordDb() {
@@ -1266,7 +1361,7 @@ async function syncKeywordDb() {
   const current = asArray(await kvGetJson('blocked-keywords', []));
   const merged = Array.from(new Set([...current, ...fromDb]));
   await cachedKvPutJson('blocked-keywords', merged);
-  invalidateMemoryCache('merged-keywords');
+  invalidateMemoryCache('merged-keyword-rules');
   const added = merged.length - current.length;
   return sendMarkdown(
     adminUid,

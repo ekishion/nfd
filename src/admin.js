@@ -297,26 +297,40 @@ export async function sendAdminHelp(prefix = '') {
 export async function listKeywords() {
   const adminUid = getAdminUid();
   if (!adminUid) return;
-  const keywords = await getKeywordRules();
-  if (!keywords.length) {
+  const rules = await getKeywordRules();
+  if (!rules.length) {
     return sendMarkdown(adminUid, '关键词小纸条还是空的喵。');
   }
-  return sendMarkdown(
-    adminUid,
-    ['*关键词小纸条*', ...keywords.map((keyword) => `\\- ${escapeMarkdown(keyword)}`)].join('\n'),
-  );
+  const lines = rules.map((rule) => {
+    if (rule.isRegex) {
+      return `\\- \\[正则\\] \`${escapeMarkdown(rule.raw)}\``;
+    }
+    return `\\- ${escapeMarkdown(rule.raw)}`;
+  });
+  return sendMarkdown(adminUid, ['*关键词小纸条*', ...lines].join('\n'));
 }
 
 export async function addKeyword(message) {
   const adminUid = getAdminUid();
   if (!adminUid) return;
   const keyword = getCommandArgs(message);
-  if (!keyword) return sendMarkdown(adminUid, '用法：`/addkeyword 关键词`');
+  if (!keyword) return sendMarkdown(adminUid, '用法：`/addkeyword 关键词` 或 `/addkeyword /正则/i`');
+
+  if (keyword.startsWith('/') && keyword.lastIndexOf('/') > 0) {
+    const match = keyword.match(/^\/(.+)\/([a-z]*)$/i);
+    if (match) {
+      try {
+        new RegExp(match[1], match[2] || 'i');
+      } catch (err) {
+        return sendMarkdown(adminUid, escapeMarkdown(`正则表达式语法错误：${err.message}`));
+      }
+    }
+  }
 
   const current = await kvGetJson('blocked-keywords', []);
   const next = Array.from(new Set([...asArray(current), keyword]));
   await cachedKvPutJson('blocked-keywords', next);
-  invalidateMemoryCache('merged-keywords');
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(adminUid, escapeMarkdown(`已把「${keyword}」写进关键词小纸条`));
 }
 
@@ -329,7 +343,7 @@ export async function deleteKeyword(message) {
   const current = await kvGetJson('blocked-keywords', []);
   const next = asArray(current).filter((item) => item !== keyword);
   await cachedKvPutJson('blocked-keywords', next);
-  invalidateMemoryCache('merged-keywords');
+  invalidateMemoryCache('merged-keyword-rules');
   return sendMarkdown(adminUid, escapeMarkdown(`已从关键词小纸条擦掉「${keyword}」`));
 }
 
@@ -343,7 +357,7 @@ export async function syncKeywordDb() {
   const current = asArray(await kvGetJson('blocked-keywords', []));
   const merged = Array.from(new Set([...current, ...fromDb]));
   await cachedKvPutJson('blocked-keywords', merged);
-  invalidateMemoryCache('merged-keywords');
+  invalidateMemoryCache('merged-keyword-rules');
   const added = merged.length - current.length;
   return sendMarkdown(
     adminUid,
