@@ -29,6 +29,7 @@ No Fraud / Node Forward Bot
    - `ENV_ADMIN_UID`：管理员 Telegram 用户 ID。
    - `ENV_KEYWORD_NOTICE_TO_USER`：可选，设为 `false` 时关键词拦截不通知用户。
    - `ENV_KEYWORD_NOTICE_TO_ADMIN`：可选，设为 `false` 时关键词拦截不通知管理员（默认 `true`）。
+   - `ENV_REQUIRE_USERNAME`：可选，设为 `true` 时要求用户必须拥有 Telegram 用户名（`@username`），无用户名时不转发留言（默认 `false`）。
    - `ENV_ENABLE_NOTIFICATION`：可选，设为 `false` 时关闭交易提醒，默认 `true`。
    - `ENV_USER_ACK_COOLDOWN_MS`：可选，留言成功回执冷却时间，默认 `30000`。
    - `ENV_COMMAND_WARNING_COOLDOWN_MS`：可选，用户误触管理命令或被屏蔽提示冷却时间，默认 `60000`。

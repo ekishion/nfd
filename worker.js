@@ -14,6 +14,7 @@ const KEYWORD_VIOLATION_TTL = Number(getOptionalEnv('ENV_KEYWORD_VIOLATION_TTL_S
 const ENABLE_NOTIFICATION = getOptionalEnv('ENV_ENABLE_NOTIFICATION', 'true') !== 'false';
 const KEYWORD_NOTICE_TO_USER = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'true') !== 'false';
 const KEYWORD_NOTICE_TO_ADMIN = getOptionalEnv('ENV_KEYWORD_NOTICE_TO_ADMIN', 'true') !== 'false';
+const REQUIRE_USERNAME = getOptionalEnv('ENV_REQUIRE_USERNAME', 'false') === 'true';
 const AUTO_BLOCK_KEYWORD_VIOLATORS = getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false';
 
 const fraudDb = getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/fraud.db');
@@ -573,6 +574,16 @@ async function handleGuestMessage(message) {
     return sendCooldownPlainText(chatId, `blocked-notice-${chatId}`, '这里暂时不能继续留言了喵。', COMMAND_WARNING_COOLDOWN_MS);
   }
 
+  if (REQUIRE_USERNAME && !message.from?.username) {
+    await incrementStat('no-username-blocked');
+    return sendCooldownPlainText(
+      chatId,
+      `no-username-${chatId}`,
+      '请先在 Telegram 设置用户名（Username / @xxx）后再留言喵。',
+      COMMAND_WARNING_COOLDOWN_MS,
+    );
+  }
+
   const blockedKeyword = await findBlockedKeyword(message);
   if (blockedKeyword) {
     const violation = await recordKeywordViolation(message, blockedKeyword);
@@ -754,6 +765,7 @@ async function sendStats() {
     'admin-replied',
     'keyword-blocked',
     'keyword-auto-blocked',
+    'no-username-blocked',
     'guest-command-warning',
     'blocked-user-message',
   ];
