@@ -50,6 +50,48 @@ export function getListenChatIds() {
     .filter(Boolean);
 }
 
+export function getBotCommands() {
+  const raw = String(getOptionalEnv('ENV_BOT_COMMANDS', '')).trim();
+  if (!raw) return null;
+
+  let parsed = null;
+  // 1) JSON 数组格式：[{"command":"panel","description":"控制面板"}]
+  try {
+    const json = JSON.parse(raw);
+    if (Array.isArray(json)) {
+      parsed = normalizeBotCommands(json.map((item) => ({ command: item?.command, description: item?.description })));
+    }
+  } catch {
+    parsed = null;
+  }
+
+  // 2) 简写格式：panel:控制面板,stats:统计数据
+  if (!parsed) {
+    parsed = normalizeBotCommands(
+      raw.split(',').map((pair) => {
+        const idx = pair.indexOf(':');
+        if (idx <= 0) return null;
+        return { command: pair.slice(0, idx).trim(), description: pair.slice(idx + 1).trim() };
+      }),
+    );
+  }
+
+  if (parsed) return parsed;
+  console.log(JSON.stringify({ warning: 'ENV_BOT_COMMANDS 无法解析为有效指令清单，命令菜单未注册' }));
+  return null;
+}
+
+// Telegram 指令名仅允许小写字母、数字与下划线（1-32 位）
+function normalizeBotCommands(pairs) {
+  const commands = asArray(pairs)
+    .map((item) => ({
+      command: String(item?.command || '').trim().replace(/^\//, '').toLowerCase(),
+      description: String(item?.description || '').trim(),
+    }))
+    .filter((item) => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description);
+  return commands.length ? commands : null;
+}
+
 export function getEnableForumTopics() {
   return getOptionalEnv('ENV_ENABLE_FORUM_TOPICS', 'false') === 'true';
 }
@@ -66,8 +108,15 @@ export function getKeywordViolationTtl() {
   return Number(getOptionalEnv('ENV_KEYWORD_VIOLATION_TTL_SECONDS', String(24 * 3600)));
 }
 
-export function getFraudDbUrl() {
-  return getOptionalEnv('ENV_FRAUD_DB_URL', 'https://raw.githubusercontent.com/ekishion/nfd/main/data/fraud.db');
+// 可选功能的「默认开启」模式开关：显式设为 false/0/off/no 视为关闭（与 build.js FEATURE_OFF_VALUES 保持一致）
+const FEATURE_OFF_VALUES = ['false', '0', 'off', 'no'];
+
+export function isFeatureOff(name, fallback = 'true') {
+  return FEATURE_OFF_VALUES.includes(String(getOptionalEnv(name, fallback)).trim().toLowerCase());
+}
+
+export function getEnableFraudCheck() {
+  return !isFeatureOff('ENV_ENABLE_FRAUD_CHECK');
 }
 
 export function getKeywordDbUrl() {

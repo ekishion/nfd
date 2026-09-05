@@ -534,6 +534,88 @@ assert.strictEqual(getSenderKey({ chat: { id: -100666, type: 'channel' }, sender
 assert.strictEqual(getSenderKey({ chat: { id: -100777, type: 'group' } }), '-100777');
 console.log('Sender identity resolution across chat types verified');
 
-console.log('\nAll 20 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 21: Bot Command Menu Parsing (ENV_BOT_COMMANDS)
+// ------------------------------------------------------------------------------
+function parseBotCommands(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+
+  let parsed = null;
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json)) {
+      parsed = normalizeBotCommandPairs(json.map((item) => ({ command: item?.command, description: item?.description })));
+    }
+  } catch {
+    parsed = null;
+  }
+
+  if (!parsed) {
+    parsed = normalizeBotCommandPairs(text.split(',').map((pair) => {
+      const idx = pair.indexOf(':');
+      if (idx <= 0) return null;
+      return { command: pair.slice(0, idx).trim(), description: pair.slice(idx + 1).trim() };
+    }));
+  }
+  return parsed;
+}
+
+function normalizeBotCommandPairs(pairs) {
+  const commands = (pairs || [])
+    .map((item) => ({
+      command: String(item?.command || '').trim().replace(/^\//, '').toLowerCase(),
+      description: String(item?.description || '').trim(),
+    }))
+    .filter((item) => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description);
+  return commands.length ? commands : null;
+}
+
+assert.deepStrictEqual(
+  parseBotCommands('[{"command":"/panel","description":"控制面板"},{"command":"stats","description":"统计数据"}]'),
+  [{ command: 'panel', description: '控制面板' }, { command: 'stats', description: '统计数据' }],
+);
+assert.deepStrictEqual(
+  parseBotCommands('panel:控制面板, stats:统计数据 ,bad,,/tag:客人备注'),
+  [{ command: 'panel', description: '控制面板' }, { command: 'stats', description: '统计数据' }, { command: 'tag', description: '客人备注' }],
+);
+assert.strictEqual(parseBotCommands(''), null);
+assert.strictEqual(parseBotCommands('not a json or list'), null);
+assert.strictEqual(parseBotCommands('[{"command":"无效指令!","description":"x"}]'), null);
+assert.strictEqual(parseBotCommands('panel:'), null);
+console.log('Bot command menu parsing (JSON & shorthand) verified');
+
+// ------------------------------------------------------------------------------
+// Test 22: Feature Gate Resolution (optIn / optOut / --all)
+// ------------------------------------------------------------------------------
+const FEATURE_OFF_VALUES = ['false', '0', 'off', 'no'];
+
+function isFeatureActive(feature, env, isBuildAll = false) {
+  if (isBuildAll) return true;
+  if (feature.mode === 'optOut') {
+    const val = String(env[feature.envs[0]] || '').trim().toLowerCase();
+    return !FEATURE_OFF_VALUES.includes(val);
+  }
+  return feature.envs.some((name) => env[name] && String(env[name]).trim().length > 0);
+}
+
+const optInFeature = { mode: 'optIn', envs: ['ENV_BOT_COMMANDS'] };
+const multiEnvFeature = { mode: 'optIn', envs: ['ENV_START_MESSAGE_URL', 'ENV_NOTIFICATION_URL'] };
+const optOutFeature = { mode: 'optOut', envs: ['ENV_ENABLE_FRAUD_CHECK'] };
+
+assert.strictEqual(isFeatureActive(optInFeature, { ENV_BOT_COMMANDS: 'panel:控制面板' }), true);
+assert.strictEqual(isFeatureActive(optInFeature, {}), false);
+assert.strictEqual(isFeatureActive(multiEnvFeature, { ENV_NOTIFICATION_URL: 'https://example.com/x.txt' }), true);
+assert.strictEqual(isFeatureActive(multiEnvFeature, {}), false);
+assert.strictEqual(isFeatureActive(optOutFeature, {}), true);
+assert.strictEqual(isFeatureActive(optOutFeature, { ENV_ENABLE_FRAUD_CHECK: 'false' }), false);
+assert.strictEqual(isFeatureActive(optOutFeature, { ENV_ENABLE_FRAUD_CHECK: 'OFF' }), false);
+assert.strictEqual(isFeatureActive(optOutFeature, { ENV_ENABLE_FRAUD_CHECK: '0' }), false);
+assert.strictEqual(isFeatureActive(optOutFeature, { ENV_ENABLE_FRAUD_CHECK: 'true' }), true);
+assert.strictEqual(isFeatureActive(optInFeature, {}, true), true);
+assert.strictEqual(isFeatureActive(optOutFeature, { ENV_ENABLE_FRAUD_CHECK: 'false' }, true), true);
+console.log('Feature gate resolution (optIn / optOut / --all) verified');
+
+console.log('\nAll 22 test suites passed with 0 errors!\n');
 
 

@@ -8,10 +8,15 @@ import { buildNotificationContent } from './base.js';
 import { pushdeerAdapter } from './pushdeer.js';
 import { serverchanAdapter } from './serverchan.js';
 
-export const notificationProviders = {
-  pushdeer: pushdeerAdapter,
-  serverchan: serverchanAdapter,
-};
+// 单文件打包按需裁剪：未打包的适配器不会出现在作用域中，
+// 用 typeof 守卫避免「仅配置一个通道」时引用未定义标识符导致崩溃
+export const notificationProviders = {};
+if (typeof pushdeerAdapter === 'function') {
+  notificationProviders.pushdeer = pushdeerAdapter;
+}
+if (typeof serverchanAdapter === 'function') {
+  notificationProviders.serverchan = serverchanAdapter;
+}
 
 export { buildNotificationContent };
 

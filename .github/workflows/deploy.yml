@@ -10,6 +10,34 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # 变量映射提升到 job 级：构建期按需裁剪（node build.js）与运行时注入（wrangler vars）共用同一份变量
+    env:
+      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
+      ENV_ADMIN_UID: ${{ secrets.ENV_ADMIN_UID || vars.ENV_ADMIN_UID }}
+      ENV_FORWARD_CHAT_ID: ${{ secrets.ENV_FORWARD_CHAT_ID || vars.ENV_FORWARD_CHAT_ID }}
+      ENV_FORWARD_THREAD_ID: ${{ secrets.ENV_FORWARD_THREAD_ID || vars.ENV_FORWARD_THREAD_ID }}
+      ENV_FORWARD_DELAY_SECONDS: ${{ secrets.ENV_FORWARD_DELAY_SECONDS || vars.ENV_FORWARD_DELAY_SECONDS }}
+      ENV_ALERT_CHAT_ID: ${{ secrets.ENV_ALERT_CHAT_ID || vars.ENV_ALERT_CHAT_ID }}
+      ENV_ALERT_THREAD_ID: ${{ secrets.ENV_ALERT_THREAD_ID || vars.ENV_ALERT_THREAD_ID }}
+      ENV_ENABLE_FORUM_TOPICS: ${{ secrets.ENV_ENABLE_FORUM_TOPICS || vars.ENV_ENABLE_FORUM_TOPICS }}
+      ENV_ENABLE_FRAUD_CHECK: ${{ secrets.ENV_ENABLE_FRAUD_CHECK || vars.ENV_ENABLE_FRAUD_CHECK }}
+      ENV_LISTEN_CHAT_IDS: ${{ secrets.ENV_LISTEN_CHAT_IDS || vars.ENV_LISTEN_CHAT_IDS }}
+      ENV_BOT_COMMANDS: ${{ secrets.ENV_BOT_COMMANDS || vars.ENV_BOT_COMMANDS }}
+      ENV_REQUIRE_USERNAME: ${{ secrets.ENV_REQUIRE_USERNAME || vars.ENV_REQUIRE_USERNAME }}
+      ENV_REQUIRE_PHOTO: ${{ secrets.ENV_REQUIRE_PHOTO || vars.ENV_REQUIRE_PHOTO }}
+      ENV_AUTO_BLOCK_KEYWORD_VIOLATORS: ${{ secrets.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS || vars.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS }}
+      ENV_KEYWORD_VIOLATION_LIMIT: ${{ secrets.ENV_KEYWORD_VIOLATION_LIMIT || vars.ENV_KEYWORD_VIOLATION_LIMIT }}
+      ENV_ENABLE_FLOOD_PROTECTION: ${{ secrets.ENV_ENABLE_FLOOD_PROTECTION || vars.ENV_ENABLE_FLOOD_PROTECTION }}
+      ENV_BLOCK_EXECUTABLES: ${{ secrets.ENV_BLOCK_EXECUTABLES || vars.ENV_BLOCK_EXECUTABLES }}
+      ENV_AWAY_MODE: ${{ secrets.ENV_AWAY_MODE || vars.ENV_AWAY_MODE }}
+      ENV_AWAY_MESSAGE: ${{ secrets.ENV_AWAY_MESSAGE || vars.ENV_AWAY_MESSAGE }}
+      ENV_FRAUD_DB_URL: ${{ secrets.ENV_FRAUD_DB_URL || vars.ENV_FRAUD_DB_URL }}
+      ENV_KEYWORD_DB_URL: ${{ secrets.ENV_KEYWORD_DB_URL || vars.ENV_KEYWORD_DB_URL }}
+      ENV_START_MESSAGE_URL: ${{ secrets.ENV_START_MESSAGE_URL || vars.ENV_START_MESSAGE_URL }}
+      ENV_PUSHDEER_KEY: ${{ secrets.ENV_PUSHDEER_KEY || vars.ENV_PUSHDEER_KEY }}
+      ENV_PUSHDEER_URL: ${{ secrets.ENV_PUSHDEER_URL || vars.ENV_PUSHDEER_URL }}
+      ENV_SERVERCHAN_KEY: ${{ secrets.ENV_SERVERCHAN_KEY || vars.ENV_SERVERCHAN_KEY }}
+      ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY: ${{ secrets.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY || vars.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -54,30 +82,6 @@ jobs:
           }
           fs.writeFileSync("wrangler.json", JSON.stringify(config, null, 2));
           '
-        env:
-          KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
-          ENV_ADMIN_UID: ${{ secrets.ENV_ADMIN_UID || vars.ENV_ADMIN_UID }}
-          ENV_FORWARD_CHAT_ID: ${{ secrets.ENV_FORWARD_CHAT_ID || vars.ENV_FORWARD_CHAT_ID }}
-          ENV_FORWARD_THREAD_ID: ${{ secrets.ENV_FORWARD_THREAD_ID || vars.ENV_FORWARD_THREAD_ID }}
-          ENV_FORWARD_DELAY_SECONDS: ${{ secrets.ENV_FORWARD_DELAY_SECONDS || vars.ENV_FORWARD_DELAY_SECONDS }}
-          ENV_ALERT_CHAT_ID: ${{ secrets.ENV_ALERT_CHAT_ID || vars.ENV_ALERT_CHAT_ID }}
-          ENV_ALERT_THREAD_ID: ${{ secrets.ENV_ALERT_THREAD_ID || vars.ENV_ALERT_THREAD_ID }}
-          ENV_ENABLE_FORUM_TOPICS: ${{ secrets.ENV_ENABLE_FORUM_TOPICS || vars.ENV_ENABLE_FORUM_TOPICS }}
-          ENV_REQUIRE_USERNAME: ${{ secrets.ENV_REQUIRE_USERNAME || vars.ENV_REQUIRE_USERNAME }}
-          ENV_REQUIRE_PHOTO: ${{ secrets.ENV_REQUIRE_PHOTO || vars.ENV_REQUIRE_PHOTO }}
-          ENV_AUTO_BLOCK_KEYWORD_VIOLATORS: ${{ secrets.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS || vars.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS }}
-          ENV_KEYWORD_VIOLATION_LIMIT: ${{ secrets.ENV_KEYWORD_VIOLATION_LIMIT || vars.ENV_KEYWORD_VIOLATION_LIMIT }}
-          ENV_ENABLE_FLOOD_PROTECTION: ${{ secrets.ENV_ENABLE_FLOOD_PROTECTION || vars.ENV_ENABLE_FLOOD_PROTECTION }}
-          ENV_BLOCK_EXECUTABLES: ${{ secrets.ENV_BLOCK_EXECUTABLES || vars.ENV_BLOCK_EXECUTABLES }}
-          ENV_AWAY_MODE: ${{ secrets.ENV_AWAY_MODE || vars.ENV_AWAY_MODE }}
-          ENV_AWAY_MESSAGE: ${{ secrets.ENV_AWAY_MESSAGE || vars.ENV_AWAY_MESSAGE }}
-          ENV_FRAUD_DB_URL: ${{ secrets.ENV_FRAUD_DB_URL || vars.ENV_FRAUD_DB_URL }}
-          ENV_KEYWORD_DB_URL: ${{ secrets.ENV_KEYWORD_DB_URL || vars.ENV_KEYWORD_DB_URL }}
-          ENV_START_MESSAGE_URL: ${{ secrets.ENV_START_MESSAGE_URL || vars.ENV_START_MESSAGE_URL }}
-          ENV_PUSHDEER_KEY: ${{ secrets.ENV_PUSHDEER_KEY || vars.ENV_PUSHDEER_KEY }}
-          ENV_PUSHDEER_URL: ${{ secrets.ENV_PUSHDEER_URL || vars.ENV_PUSHDEER_URL }}
-          ENV_SERVERCHAN_KEY: ${{ secrets.ENV_SERVERCHAN_KEY || vars.ENV_SERVERCHAN_KEY }}
-          ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY: ${{ secrets.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY || vars.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY }}
 
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3

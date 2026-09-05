@@ -32,6 +32,7 @@
   | `ENV_ENABLE_FORUM_TOPICS` | （可选）是否开启多话题模式 | `true` |
   | `ENV_FORWARD_DELAY_SECONDS` | （可选）转发延迟秒数 | `5` |
   | `ENV_LISTEN_CHAT_IDS` | （可选）监听群/频道白名单（逗号分隔） | `-1001111111111,-1002222222222` |
+  | `ENV_BOT_COMMANDS` | （可选）自定义命令菜单（简写或 JSON 格式，同时用于构建裁剪） | `panel:控制面板,stats:统计数据` |
 
 ### 2. 触发首次部署
 
@@ -104,6 +105,85 @@ https://你的worker域名/registerWebhook?secret=你的ENV_BOT_SECRET
 ```
 
 建议频率为每分钟一次。使用 GitHub Actions 或控制台在线部署时，可在 Cloudflare 控制台直接添加 Cron 触发器。
+
+---
+
+## 按需打包（构建裁剪）机制
+
+单文件部署使用的 `worker.js` 由 `node build.js` 从 `src/` 打包生成。可选功能遵循**「环境变量未配置就不参与打包」**的原则：构建时未命中的模块会被等价的空实现（stub）替代，真实代码不进入最终产物，Worker 体积更小、运行面更小。
+
+### 功能开关总览
+
+| 功能 | 开关环境变量 | 开关模式 | 默认状态 | 裁剪后的行为 |
+| :--- | :--- | :--- | :--- | :--- |
+| PushDeer 推送 | `ENV_PUSHDEER_KEY` | 按需开启 | 🚫 不打包 | 不推送任何外部通知 |
+| Server酱 推送 | `ENV_SERVERCHAN_KEY` | 按需开启 | 🚫 不打包 | 不推送任何外部通知 |
+| Bot 命令菜单 | `ENV_BOT_COMMANDS` | 按需开启 | 🚫 不打包 | 不注册 `/` 命令菜单 |
+| 论坛话题自动创建 | `ENV_ENABLE_FORUM_TOPICS` | 按需开启 | 🚫 不打包 | 不自动创建话题（留言仍正常转发） |
+| 远程自定义文案 | `ENV_START_MESSAGE_URL` / `ENV_NOTIFICATION_URL`（任一） | 按需开启 | 🚫 不打包 | 使用 `data/` 内置默认文案 |
+| 诈骗库检测 | `ENV_ENABLE_FRAUD_CHECK` | 默认开启 | ✅ 打包 | 等同关闭：命中诈骗库不再报警 |
+
+- **按需开启**（optIn）：构建时配置了变量 → 打包真实实现；未配置 → 注入 stub。适合默认关闭的功能。
+- **默认开启**（optOut）：默认打包；构建时显式设为 `false` / `0` / `off` / `no` 才裁剪。适合默认开启的功能。
+
+### 构建决策流程
+
+```mermaid
+flowchart LR
+    A["node build.js"] --> B{"--all 或<br>BUILD_ALL=true ?"}
+    B -- "是" --> C["全部功能打包"]
+    B -- "否" --> D{"开关模式"}
+    D -- "按需开启 optIn" --> E{"环境变量已配置?"}
+    E -- "是" --> F["✔ 打包真实实现"]
+    E -- "否" --> G["✘ 注入空 stub"]
+    D -- "默认开启 optOut" --> H{"显式设为<br>false / 0 / off / no ?"}
+    H -- "否" --> F
+    H -- "是" --> G
+    C --> I["输出 worker.js"]
+    F --> I
+    G --> I
+```
+
+每次构建都会输出产物构成清单，例如：
+
+```text
+Bundling src/*.js into worker.js...
+  ✘ 外部推送通道 -> stub
+  ✘ Bot 命令菜单 (commands.js) -> stub
+  ✔ 论坛话题自动创建 (forum.js)
+  ✔ 远程自定义文案 (remote-text.js)
+  ✔ 诈骗库检测 (fraud.js)
+Successfully generated worker.js (82450 bytes)
+```
+
+### 使用要点
+
+1. **GitHub Actions 部署**：将开关变量配置为仓库 Variables（或 Secrets），工作流会同时提供给构建步骤与运行时（wrangler `vars`），裁剪结果与运行行为自动一致；
+2. **单文件部署**：在本地构建前导出对应变量，例如：
+   ```bash
+   ENV_BOT_COMMANDS='panel:控制面板' ENV_ENABLE_FORUM_TOPICS=true node build.js
+   ```
+3. **全量产物**：`node build.js --all`（或设置 `BUILD_ALL=true`）强制打包全部可选模块；`npm test` 会对「裁剪」与「全量」两种产物分别做语法检查与导入冒烟测试；
+4. **运行时变量无法唤醒已被裁剪的模块**：只在 Cloudflare 控制台配置变量、构建时未配置的话，需要按上述方式重新构建部署。
+
+### 新增可裁剪功能
+
+在 `build.js` 的 `FEATURE_MODULES` 注册表中登记一条即可，无需改动其他构建逻辑：
+
+```js
+const FEATURE_MODULES = [
+  // ... 已有条目 ...
+  {
+    name: '功能显示名',
+    file: 'your-feature.js',            // src/ 下的模块文件
+    mode: 'optIn',                      // optIn=配置即打包 / optOut=默认打包、显式关闭才裁剪
+    envs: ['ENV_YOUR_FEATURE_SWITCH'],  // 开关变量（optOut 只取第一个）
+    stub: 'export function yourApi() { return null; }', // 导出名与签名需与真实模块一致
+  },
+];
+```
+
+> 注意：stub 的导出名与签名必须与真实模块保持一致，调用方无需感知裁剪；可选模块的顶层代码不能依赖其他可选模块的导出（未打包时该标识符不存在）。
 
 ---
 

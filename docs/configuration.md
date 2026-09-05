@@ -17,6 +17,7 @@
 | `ENV_ALERT_THREAD_ID` | 可选 | - | 拦截告警通知投递的目标话题 ID（例如群内的拦截通知专属话题） |
 | `ENV_ENABLE_FORUM_TOPICS` | 可选 | `false` | 设为 `true` 时，在论坛超级群内自动为每位新客人创建专属独立话题 |
 | `ENV_LISTEN_CHAT_IDS` | 可选 | - | 监听模式白名单：逗号分隔的群聊/频道 ID 列表。机器人会把白名单会话内成员的发言当作客人留言转达，未列入白名单的群组仍会被自动退出。详见[监听群聊/频道配置指引](#监听群聊频道留言来源配置指引) |
+| `ENV_BOT_COMMANDS` | 可选 | - | 自定义 Bot 命令菜单（`setMyCommands`）。支持 JSON 数组或 `panel:控制面板,stats:统计数据` 简写格式。**未配置时不注册任何命令菜单**，且该功能模块不参与打包。详见[自定义命令菜单](#自定义命令菜单) |
 | `ENV_FORWARD_DELAY_SECONDS` | 可选 | `0` | 转发缓冲延迟秒数。汇总该时间段内的连续消息统一审查后一起转发。设为 0 为即时转发。注意：Worker 单次请求最长存活约 30 秒，内联等待上限为 25 秒，建议同时在 `wrangler.jsonc` 启用每分钟的 `triggers.crons` 定时兜底补发遗留批次 |
 | `ENV_REQUIRE_USERNAME` | 可选 | `false` | 设为 `true` 时拦截未设置 Telegram 用户名（`@username`）的客人留言 |
 | `ENV_REQUIRE_PHOTO` | 可选 | `false` | 设为 `true` 时拦截未设置个人头像的客人留言（别名 `ENV_REQUIRE_AVATAR`） |
@@ -38,6 +39,9 @@
 | `ENV_PUSHDEER_URL` | 可选 | - | （可选）自建 PushDeer 服务的完整 API 端点地址 |
 | `ENV_SERVERCHAN_KEY` | 可选 | - | Server酱（Turbo版）SendKey 微信推送密钥 |
 | `ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY` | 可选 | `false` | 设为 `true` 时仅在触发安全拦截报警时外发推送，正常留言不外发 |
+| `ENV_ENABLE_FRAUD_CHECK` | 可选 | `true` | 诈骗库检测开关。显式设为 `false`/`0`/`off`/`no` 时关闭：运行期跳过检测，构建期该功能模块不参与打包 |
+
+> **按需打包提示**：上表中部分可选功能遵循「环境变量未配置就不参与打包」的构建裁剪机制（外部推送、命令菜单、论坛话题、远程自定义文案等），仅在 Cloudflare 控制台配置运行时变量无法让已被裁剪的模块生效，详见[按需打包（构建裁剪）机制](deployment.md#按需打包构建裁剪机制)。
 
 ---
 
@@ -91,6 +95,28 @@
 - 请勿把 `ENV_FORWARD_CHAT_ID` / `ENV_ALERT_CHAT_ID` 同时填入监听白名单，同一会话以管理台身份优先；
 - 群聊内触发关键词违规自动拉黑的是**发送者本人**，不会影响其他成员；
 - 不在白名单内的群组/频道仍会被自动退出（可在 Worker 日志中检索 `auto-leave-unauthorized-chat`）。
+
+---
+
+## 自定义命令菜单
+
+Bot 的命令菜单（聊天框输入 `/` 时展示的指令列表）由 `ENV_BOT_COMMANDS` 驱动，支持两种写法（任选其一）：
+
+**简写格式**（指令:描述，逗号分隔）：
+```text
+ENV_BOT_COMMANDS=panel:控制面板,stats:统计数据,user:客人画像,tag:客人备注,block:拉黑用户
+```
+
+**JSON 数组格式**（描述含逗号等特殊字符时推荐）：
+```text
+ENV_BOT_COMMANDS=[{"command":"panel","description":"控制面板"},{"command":"stats","description":"统计数据"}]
+```
+
+规则与注意事项：
+- 指令名会自动去前导 `/` 并转为小写，仅允许字母、数字、下划线（1-32 位），不符合规则的条目会被忽略；
+- **未配置 `ENV_BOT_COMMANDS` 时不会注册任何命令菜单**，且该功能模块不参与打包（见[按需打包机制](deployment.md#按需打包构建裁剪机制)）；
+- 使用 GitHub Actions 部署时，需将该变量配置为仓库 Variables 才会参与构建裁剪；
+- 菜单仅是快捷入口，配置菜单并不会新增指令能力，实际管理指令以[管理员指令总览](#管理员指令总览)为准。
 
 ---
 

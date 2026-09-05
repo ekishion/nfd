@@ -10,7 +10,6 @@ import {
   getAdminUid,
   getUserAckCooldownMs,
   getCommandWarningCooldownMs,
-  getNotificationUrl,
   asArray,
   sleep,
 } from './config.js';
@@ -27,14 +26,13 @@ import {
   getRuntimeConfig,
   incrementStat,
   sendCooldownPlainText,
-  isFraud,
-  fetchTextOrDefault,
   getGuestTag,
   trackGuestProfile,
-  getGuestTopicId,
-  setGuestTopicId,
   getGuestIdByTopic,
 } from './cache.js';
+import { isFraud } from './fraud.js';
+import { fetchNotificationText } from './remote-text.js';
+import { resolveForumTopicThreadId } from './forum.js';
 import {
   sendMarkdown,
   copyMessage,
@@ -44,7 +42,6 @@ import {
   buildUserName,
   getSenderKey,
   adminMessageKeyboard,
-  createForumTopic,
 } from './telegram.js';
 import {
   isUserBlocked,
@@ -252,24 +249,10 @@ export async function processGuestMessageBatch(messages, config = null) {
 
   let targetThreadId = config.forward_thread_id || null;
 
-  // Auto-create Forum Topic if enabled for supergroup
-  if (config.enable_forum_topics && forwardChatId.startsWith('-')) {
-    let topicId = await getGuestTopicId(senderKey);
-    if (!topicId) {
-      const senderName = buildUserName(firstMessage.from || {}) || firstMessage.chat?.title || '匿名来源';
-      const topicName = `${senderName} (${senderKey})`.slice(0, 128);
-      const createRes = await createForumTopic({
-        chat_id: forwardChatId,
-        name: topicName,
-      });
-      if (createRes.ok && createRes.result?.message_thread_id) {
-        topicId = createRes.result.message_thread_id;
-        await setGuestTopicId(senderKey, topicId);
-      }
-    }
-    if (topicId) {
-      targetThreadId = topicId;
-    }
+  // Auto-create Forum Topic if enabled for supergroup（可选功能模块，见 src/forum.js）
+  const forumThreadId = await resolveForumTopicThreadId(config, firstMessage, senderKey, forwardChatId);
+  if (forumThreadId) {
+    targetThreadId = forumThreadId;
   }
 
   const threadParam = targetThreadId ? { message_thread_id: targetThreadId } : {};
@@ -386,7 +369,7 @@ export async function handleNotify(message, config = null) {
   const lastMsgTime = Number(await kvGetText(`lastmsg-${senderKey}`, '0'));
   if (!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL) {
     await kvPutText(`lastmsg-${senderKey}`, String(Date.now()));
-    const notification = await fetchTextOrDefault(getNotificationUrl(), DEFAULT_NOTIFICATION);
+    const notification = await fetchNotificationText(DEFAULT_NOTIFICATION);
     return sendMarkdown(alertChatId, notification, extra);
   }
 }

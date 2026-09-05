@@ -2,7 +2,7 @@
 // src/cache.js - Memory TTL Cache, KV Wrapper & Remote DB Management
 // ==============================================================================
 
-import { FRAUD_CACHE_TTL, getFraudDbUrl, getKeywordDbUrl, getDefaultEnvConfig, getToken, asArray } from './config.js';
+import { FRAUD_CACHE_TTL, getKeywordDbUrl, getDefaultEnvConfig, getToken, asArray } from './config.js';
 import { sendPlainText } from './telegram.js';
 
 export const memoryCache = new Map();
@@ -339,31 +339,8 @@ export async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {
   }
 }
 
-export async function isFraud(id) {
-  const lines = await fetchRemoteDb(getFraudDbUrl());
-  return lines.includes(String(id));
-}
-
 export async function fetchKeywordDb() {
   return fetchRemoteDb(getKeywordDbUrl());
-}
-
-export async function fetchTextOrDefault(url, fallback) {
-  if (!url) return fallback;
-  const cached = getMemoryCache(`text-${url}`);
-  if (cached) return cached;
-  try {
-    const response = await fetch(url);
-    if (response.ok) {
-      const text = await response.text();
-      setMemoryCache(`text-${url}`, text, 10 * 60 * 1000);
-      return text;
-    }
-    return fallback;
-  } catch (error) {
-    console.log(JSON.stringify({ error: 'fetch-text-failed', url, message: error.message }));
-    return fallback;
-  }
 }
 
 export async function getBotUsername() {

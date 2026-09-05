@@ -13,12 +13,13 @@ import {
   getForwardChatId,
   getAlertChatId,
   getListenChatIds,
-  getStartMsgUrl,
 } from './config.js';
-import { fetchTextOrDefault, isDuplicateUpdate, getBotUsername } from './cache.js';
+import { isDuplicateUpdate, getBotUsername } from './cache.js';
+import { fetchStartMessage } from './remote-text.js';
 import { apiUrl, sendMarkdown, getCommand, formatStartMessage, leaveChat } from './telegram.js';
 import { handleGuestMessage, getMappedGuestId, flushStalePendingBatches } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
+import { registerBotCommands } from './commands.js';
 
 let secretWarningLogged = false;
 function warnMissingSecret() {
@@ -198,7 +199,7 @@ export async function onMessage(message) {
     if (isPrivateAdminChat || isSenderAdmin) {
       return sendMarkdown(message.chat.id, ADMIN_GREETING);
     }
-    const startMsg = await fetchTextOrDefault(getStartMsgUrl(), DEFAULT_START_MESSAGE);
+    const startMsg = await fetchStartMessage(DEFAULT_START_MESSAGE);
     return sendMarkdown(message.chat.id, formatStartMessage(startMsg, message.from || {}));
   }
 
@@ -228,24 +229,8 @@ export async function registerWebhook(requestUrl) {
     }),
   }).then((response) => response.json());
 
-  const commands = [
-    { command: 'panel', description: '控制面板' },
-    { command: 'stats', description: '统计数据' },
-    { command: 'user', description: '客人画像' },
-    { command: 'tag', description: '客人备注' },
-    { command: 'quick', description: '快捷回复' },
-    { command: 'quicks', description: '短语列表' },
-    { command: 'away', description: '离开模式' },
-    { command: 'back', description: '恢复在线' },
-    { command: 'block', description: '拉黑用户' },
-    { command: 'unblock', description: '解除拉黑' },
-    { command: 'keywords', description: '关键词列表' },
-  ];
-  await fetch(apiUrl('setMyCommands'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ commands }),
-  }).catch(() => {});
+  // 命令菜单由 ENV_BOT_COMMANDS 驱动，未配置时该功能不生效（可选模块，见 build.js FEATURE_MODULES）
+  await registerBotCommands();
 
   return new Response(r.ok ? 'Ok' : JSON.stringify(r, null, 2));
 }

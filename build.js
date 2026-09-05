@@ -1,6 +1,14 @@
 // ==============================================================================
 // build.js - Lightweight Bundler with Conditional Tree-Shaking for NFD
 // Bundles src/*.js and src/notifiers/*.js into a single worker.js module
+//
+// 按需打包机制：
+// - 外部推送通道登记在 NOTIFIER_MAP：任一环境变量命中即打包对应通道实现
+// - 可选功能模块登记在 FEATURE_MODULES，支持两种模式：
+//   optIn  —— 配置任一 envs 即打包，未配置注入 stub（适合默认关闭的功能）
+//   optOut —— 默认打包，envs 显式设为 false/0/off/no 才裁剪（适合默认开启的功能）
+// - 构建期决定裁剪结果：node build.js [--all]
+//   --all / BUILD_ALL=true / BUILD_ALL_NOTIFIERS=true / NODE_ENV=test 时全量打包
 // ==============================================================================
 
 const fs = require('fs');
@@ -10,13 +18,71 @@ const SRC_DIR = path.join(__dirname, 'src');
 const DATA_DIR = path.join(__dirname, 'data');
 const OUTPUT_FILE = path.join(__dirname, 'worker.js');
 
+// 外部推送子通道：任一环境变量命中即打包对应通道实现
 const NOTIFIER_MAP = [
   { key: 'pushdeer', file: 'notifiers/pushdeer.js', env: 'ENV_PUSHDEER_KEY' },
   { key: 'serverchan', file: 'notifiers/serverchan.js', env: 'ENV_SERVERCHAN_KEY' },
 ];
 
+// 可选功能模块注册表：新增可裁剪功能时在此登记 name / file / mode / envs / stub
+const FEATURE_MODULES = [
+  {
+    name: 'Bot 命令菜单',
+    file: 'commands.js',
+    mode: 'optIn',
+    envs: ['ENV_BOT_COMMANDS'],
+    stub: 'export async function registerBotCommands() {}',
+  },
+  {
+    name: '论坛话题自动创建',
+    file: 'forum.js',
+    mode: 'optIn',
+    envs: ['ENV_ENABLE_FORUM_TOPICS'],
+    stub: 'export async function resolveForumTopicThreadId() { return null; }',
+  },
+  {
+    name: '远程自定义文案',
+    file: 'remote-text.js',
+    mode: 'optIn',
+    envs: ['ENV_START_MESSAGE_URL', 'ENV_NOTIFICATION_URL'],
+    stub: `
+export async function fetchStartMessage(fallback) { return fallback; }
+export async function fetchNotificationText(fallback) { return fallback; }
+`,
+  },
+  {
+    name: '诈骗库检测',
+    file: 'fraud.js',
+    mode: 'optOut',
+    envs: ['ENV_ENABLE_FRAUD_CHECK'],
+    stub: 'export async function isFraud() { return false; }',
+  },
+];
+
+// 与 config.js 的 FEATURE_OFF_VALUES 保持一致
+const FEATURE_OFF_VALUES = ['false', '0', 'off', 'no'];
+
+function isEnvConfigured(envs) {
+  return envs.some((name) => {
+    const val = process.env[name];
+    return val && String(val).trim().length > 0;
+  });
+}
+
+function isFeatureActive(feature, isBuildAll) {
+  if (isBuildAll) return true;
+  if (feature.mode === 'optOut') {
+    const val = String(process.env[feature.envs[0]] || '').trim().toLowerCase();
+    return !FEATURE_OFF_VALUES.includes(val);
+  }
+  return isEnvConfigured(feature.envs);
+}
+
 function resolveActiveModules() {
-  const isBuildAll = process.env.BUILD_ALL_NOTIFIERS === 'true' || process.env.NODE_ENV === 'test';
+  const isBuildAll = process.argv.includes('--all')
+    || process.env.BUILD_ALL === 'true'
+    || process.env.BUILD_ALL_NOTIFIERS === 'true'
+    || process.env.NODE_ENV === 'test';
 
   // Find which notifier channels have environment variables configured
   const activeChannels = NOTIFIER_MAP.filter((item) => {
@@ -38,6 +104,7 @@ function resolveActiveModules() {
       notifierModules.push(ch.file);
     }
     notifierModules.push('notifiers/index.js');
+    console.log(`  ✔ 外部推送通道: ${activeChannels.map((ch) => ch.key).join(', ')}`);
   } else {
     // Zero external notification channels configured: inject stub dispatcher without bundling any sub-channel files
     notifierModules.push({
@@ -48,7 +115,24 @@ export const notificationProviders = {};
 export async function dispatchNotification() {}
 `,
     });
+    console.log('  ✘ 外部推送通道 -> stub');
   }
+
+  // Optional feature modules: bundle real implementation only when its gate allows
+  const featureModules = FEATURE_MODULES.map((feature) => {
+    if (isFeatureActive(feature, isBuildAll)) {
+      console.log(`  ✔ ${feature.name} (${feature.file})`);
+      return feature.file;
+    }
+    console.log(`  ✘ ${feature.name} (${feature.file}) -> stub`);
+    return {
+      virtualName: `${feature.file} (stub)`,
+      code: `
+// Feature disabled: ${feature.envs.join(' / ')} not enabled; tree-shaken stub
+${feature.stub}
+`,
+    };
+  });
 
   const trailingModules = [
     'moderation.js',
@@ -58,7 +142,7 @@ export async function dispatchNotification() {}
     'index.js',
   ];
 
-  return [...baseModules, ...notifierModules, ...trailingModules];
+  return [...baseModules, ...notifierModules, ...featureModules, ...trailingModules];
 }
 
 function bundle() {
