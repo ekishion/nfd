@@ -123,6 +123,16 @@ export function buildUserName(user = {}) {
   return String(user.id || '');
 }
 
+// 群聊 / 频道里所有成员共享同一个 chat.id，客人身份必须按实际发送者区分：
+// 普通成员用 from.id；频道帖或匿名管理员（无 from）用 sender_chat.id；私聊退回 chat.id
+export function getSenderKey(message) {
+  if (message?.chat?.type && message.chat.type !== 'private') {
+    if (message.from?.id) return String(message.from.id);
+    if (message.sender_chat?.id) return String(message.sender_chat.id);
+  }
+  return String(message.chat.id);
+}
+
 export function formatStartMessage(template, user) {
   const username = escapeMarkdown(buildUserName(user));
   return template
@@ -134,7 +144,9 @@ export function formatStartMessage(template, user) {
 
 export function buildMessageInfo(message, count = 1, tag = '') {
   const user = message.from || {};
-  const guestLabel = tag ? `${buildUserName(user)} [${tag}]` : `${buildUserName(user)} (${user.id || message.chat.id})`;
+  // 频道帖等无发送者信息的场景回退到会话标题
+  const senderName = buildUserName(user) || message.chat?.title || '匿名来源';
+  const guestLabel = tag ? `${senderName} [${tag}]` : `${senderName} (${user.id || message.chat.id})`;
   const lines = [
     '*人偶收到新留言*',
     mdLine('客人', guestLabel),

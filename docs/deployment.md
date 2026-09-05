@@ -31,6 +31,7 @@
   | `ENV_ALERT_THREAD_ID` | （可选）拦截通知的话题 ID | `9` |
   | `ENV_ENABLE_FORUM_TOPICS` | （可选）是否开启多话题模式 | `true` |
   | `ENV_FORWARD_DELAY_SECONDS` | （可选）转发延迟秒数 | `5` |
+  | `ENV_LISTEN_CHAT_IDS` | （可选）监听群/频道白名单（逗号分隔） | `-1001111111111,-1002222222222` |
 
 ### 2. 触发首次部署
 
@@ -87,6 +88,29 @@ https://你的worker域名/registerWebhook?secret=你的ENV_BOT_SECRET
    npx wrangler deploy
    ```
 3. 访问 `/registerWebhook?secret=你的ENV_BOT_SECRET` 激活 Webhook。
+
+---
+
+## 可选：定时触发器（cron）
+
+转发延迟（`ENV_FORWARD_DELAY_SECONDS`）依赖 Worker 在 `waitUntil` 中内联等待，而 Worker 单次请求最长存活约 30 秒，超过 25 秒的延迟会被截断。若进程在等待期间被回收，KV 中遗留的延迟批次由定时触发器兜底补发：
+
+在 `wrangler.jsonc` 中取消注释（或通过 Cloudflare 控制台 -> Worker -> 设置 -> 触发事件 -> Cron 触发器添加）：
+
+```jsonc
+"triggers": {
+  "crons": ["*/1 * * * *"]
+}
+```
+
+建议频率为每分钟一次。使用 GitHub Actions 或控制台在线部署时，可在 Cloudflare 控制台直接添加 Cron 触发器。
+
+---
+
+## 安全注意事项
+
+- **务必配置 `ENV_BOT_SECRET`**：未配置时 Webhook 处于无鉴权状态，任何人都可以向 `/endpoint` 伪造 Telegram 更新（Worker 日志会输出对应警告）。
+- **`/registerWebhook` 支持三种传参方式**：URL 参数 `?secret=`、请求头 `X-Telegram-Bot-Api-Secret-Token` 或 `x-secret`。其中 URL 参数会随访问记录进入浏览器历史与访问日志，公网环境下更推荐用请求头方式携带密钥；若确有泄露风险，应立即更换 `ENV_BOT_SECRET` 并重新注册 Webhook。
 
 ---
 

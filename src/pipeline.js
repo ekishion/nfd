@@ -5,6 +5,7 @@
 import {
   MESSAGE_MAP_TTL,
   NOTIFY_INTERVAL,
+  MAX_INLINE_DELAY_SECONDS,
   DEFAULT_NOTIFICATION,
   getAdminUid,
   getUserAckCooldownMs,
@@ -22,6 +23,7 @@ import {
   kvPutJson,
   kvGetText,
   kvPutText,
+  kvList,
   getRuntimeConfig,
   incrementStat,
   sendCooldownPlainText,
@@ -40,6 +42,7 @@ import {
   mdLine,
   buildMessageInfo,
   buildUserName,
+  getSenderKey,
   adminMessageKeyboard,
   createForumTopic,
 } from './telegram.js';
@@ -79,34 +82,36 @@ export async function getMappedGuestId(adminMessage) {
 }
 
 export async function handleGuestMessage(message) {
-  const chatId = String(message.chat.id);
+  // 群聊/频道来源按实际发送者区分身份；回执与警告仍发回来源会话（成员可能禁止陌生私信）
+  const senderKey = getSenderKey(message);
+  const sourceChatId = String(message.chat.id);
   const config = await getRuntimeConfig();
   const warningCooldown = getCommandWarningCooldownMs();
 
   // Parallelize analytics, profile update and user check
   const [isBlocked] = await Promise.all([
-    isUserBlocked(chatId),
-    incrementStat('guest-message'),
-    trackGuestProfile(message),
+    isUserBlocked(senderKey),
+    incrementStat('guest-message').catch(() => {}),
+    trackGuestProfile(message, senderKey).catch(() => {}),
   ]);
 
   if (isBlocked) {
-    await incrementStat('blocked-user-message');
-    return sendCooldownPlainText(chatId, `blocked-notice-${chatId}`, '这里暂时不能继续留言了喵。', warningCooldown);
+    await incrementStat('blocked-user-message').catch(() => {});
+    return sendCooldownPlainText(sourceChatId, `blocked-notice-${senderKey}`, '这里暂时不能继续留言了喵。', warningCooldown);
   }
 
   // Anti-Flood / Rate Limiting
-  const floodCheck = await checkFloodLimit(chatId, config);
+  const floodCheck = await checkFloodLimit(senderKey, config);
   if (floodCheck.blocked) {
     await dispatchNotification('security_alert', {
       reason: '防刷屏频控静音',
-      senderId: chatId,
+      senderId: senderKey,
       senderName: buildUserName(message.from || {}),
       detail: `触发防刷屏频控限制，已静音 ${floodCheck.remainingSeconds || 60} 秒`,
     });
     return sendCooldownPlainText(
-      chatId,
-      `flood-notice-${chatId}`,
+      sourceChatId,
+      `flood-notice-${senderKey}`,
       `发送消息太频繁啦，请休息 ${floodCheck.remainingSeconds || 60} 秒后再试喵。`,
       warningCooldown,
     );
@@ -114,39 +119,38 @@ export async function handleGuestMessage(message) {
 
   // Dangerous document filter
   if (config.block_executables && isDangerousDocument(message)) {
-    await incrementStat('executable-blocked');
+    await incrementStat('executable-blocked').catch(() => {});
     await dispatchNotification('security_alert', {
       reason: '危险可执行文件拦截',
-      senderId: chatId,
+      senderId: senderKey,
       senderName: buildUserName(message.from || {}),
       detail: `文件: ${message.document?.file_name || '未知文件名'} (${message.document?.mime_type || '未知类型'})`,
     });
     return sendCooldownPlainText(
-      chatId,
-      `exec-block-${chatId}`,
+      sourceChatId,
+      `exec-block-${senderKey}`,
       '抱歉，为了系统安全，不能转达可执行程序或安装包文件喵。',
       warningCooldown,
     );
   }
 
   if (config.req_username && !message.from?.username) {
-    await incrementStat('no-username-blocked');
+    await incrementStat('no-username-blocked').catch(() => {});
     return sendCooldownPlainText(
-      chatId,
-      `no-username-${chatId}`,
+      sourceChatId,
+      `no-username-${senderKey}`,
       '请先在 Telegram 设置用户名（Username / @xxx）后再留言喵。',
       warningCooldown,
     );
   }
 
   if (config.req_photo) {
-    const userId = message.from?.id || message.chat.id;
-    const hasPhoto = await checkUserHasPhoto(userId);
+    const hasPhoto = await checkUserHasPhoto(senderKey);
     if (!hasPhoto) {
-      await incrementStat('no-photo-blocked');
+      await incrementStat('no-photo-blocked').catch(() => {});
       return sendCooldownPlainText(
-        chatId,
-        `no-photo-${chatId}`,
+        sourceChatId,
+        `no-photo-${senderKey}`,
         '请先在 Telegram 设置个人头像后再留言喵。',
         warningCooldown,
       );
@@ -161,9 +165,10 @@ export async function handleGuestMessage(message) {
 }
 
 export async function handleDelayedGuestMessage(message, config) {
-  const chatId = String(message.chat.id);
-  const batchKey = `pending-msgs-${chatId}`;
-  const tokenKey = `pending-token-${chatId}`;
+  // 批次按发送者拆分，避免监听群里不同成员的消息混入同一批
+  const senderKey = getSenderKey(message);
+  const batchKey = `pending-msgs-${senderKey}`;
+  const tokenKey = `pending-token-${senderKey}`;
 
   const current = asArray(await kvGetJson(batchKey, []));
   if (!current.some((m) => m.message_id === message.message_id)) {
@@ -180,7 +185,9 @@ export async function handleDelayedGuestMessage(message, config) {
     return processGuestMessageBatch(current, config);
   }
 
-  await sleep(config.delay_seconds * 1000);
+  // Worker waitUntil 墙钟有限，内联最多等 MAX_INLINE_DELAY_SECONDS；若 isolate 提前被回收，
+  // 遗留批次由 scheduled 触发 flushStalePendingBatches 兜底补发
+  await sleep(Math.min(config.delay_seconds, MAX_INLINE_DELAY_SECONDS) * 1000);
 
   const activeToken = await kvGetJson(tokenKey, null);
   if (activeToken !== token) {
@@ -200,12 +207,13 @@ export async function processGuestMessageBatch(messages, config = null) {
   if (!config) config = await getRuntimeConfig();
 
   const firstMessage = messages[0];
-  const chatId = String(firstMessage.chat.id);
+  const senderKey = getSenderKey(firstMessage);
+  const sourceChatId = String(firstMessage.chat.id);
   const forwardChatId = config.forward_chat_id || getAdminUid();
 
-  const isBlocked = await isUserBlocked(chatId);
+  const isBlocked = await isUserBlocked(senderKey);
   if (isBlocked) {
-    await incrementStat('blocked-user-message');
+    await incrementStat('blocked-user-message').catch(() => {});
     return;
   }
 
@@ -224,21 +232,21 @@ export async function processGuestMessageBatch(messages, config = null) {
     const targetMsg = violatingMessage || firstMessage;
     const violation = await recordKeywordViolation(targetMsg, blockedResult.rule);
     if (config.auto_block && violation.count >= config.violation_limit) {
-      await setUserBlocked(chatId, true);
-      await incrementStat('keyword-auto-blocked');
+      await setUserBlocked(senderKey, true);
+      await incrementStat('keyword-auto-blocked').catch(() => {});
     }
     await notifyKeywordBlocked(targetMsg, blockedResult, violation, config);
     if (config.notice_user) {
       const text = violation.count >= config.violation_limit
         ? '多次发送不能转达的内容，这里暂时不能继续留言了喵。'
         : '这条留言含有暂时不能转达的词，人偶先收起来了喵。';
-      return sendCooldownPlainText(chatId, `keyword-notice-${chatId}`, text, getCommandWarningCooldownMs());
+      return sendCooldownPlainText(sourceChatId, `keyword-notice-${senderKey}`, text, getCommandWarningCooldownMs());
     }
     return;
   }
 
   if (!forwardChatId) {
-    console.log(JSON.stringify({ error: 'no-forward-chat-id-configured', chatId }));
+    console.log(JSON.stringify({ error: 'no-forward-chat-id-configured', senderKey }));
     return;
   }
 
@@ -246,16 +254,17 @@ export async function processGuestMessageBatch(messages, config = null) {
 
   // Auto-create Forum Topic if enabled for supergroup
   if (config.enable_forum_topics && forwardChatId.startsWith('-')) {
-    let topicId = await getGuestTopicId(chatId);
+    let topicId = await getGuestTopicId(senderKey);
     if (!topicId) {
-      const topicName = `${buildUserName(firstMessage.from || {})} (${chatId})`.slice(0, 128);
+      const senderName = buildUserName(firstMessage.from || {}) || firstMessage.chat?.title || '匿名来源';
+      const topicName = `${senderName} (${senderKey})`.slice(0, 128);
       const createRes = await createForumTopic({
         chat_id: forwardChatId,
         name: topicName,
       });
       if (createRes.ok && createRes.result?.message_thread_id) {
         topicId = createRes.result.message_thread_id;
-        await setGuestTopicId(chatId, topicId);
+        await setGuestTopicId(senderKey, topicId);
       }
     }
     if (topicId) {
@@ -264,14 +273,14 @@ export async function processGuestMessageBatch(messages, config = null) {
   }
 
   const threadParam = targetThreadId ? { message_thread_id: targetThreadId } : {};
-  const guestTag = await getGuestTag(chatId);
+  const guestTag = await getGuestTag(senderKey);
   const infoReq = await sendMarkdown(
     forwardChatId,
     buildMessageInfo(firstMessage, messages.length, guestTag),
     threadParam,
   );
   if (infoReq.ok) {
-    await rememberMessageMap(infoReq.result.message_id, chatId);
+    await rememberMessageMap(infoReq.result.message_id, senderKey);
   }
 
   let deliveredAny = false;
@@ -292,7 +301,7 @@ export async function processGuestMessageBatch(messages, config = null) {
 
     if (copyReq.ok) {
       deliveredAny = true;
-      await rememberMessageMap(copyReq.result.message_id, chatId);
+      await rememberMessageMap(copyReq.result.message_id, senderKey);
       continue;
     }
 
@@ -305,7 +314,7 @@ export async function processGuestMessageBatch(messages, config = null) {
 
     if (forwardReq.ok) {
       deliveredAny = true;
-      await rememberMessageMap(forwardReq.result.message_id, chatId);
+      await rememberMessageMap(forwardReq.result.message_id, senderKey);
       continue;
     }
 
@@ -313,7 +322,7 @@ export async function processGuestMessageBatch(messages, config = null) {
       forwardChatId,
       [
         '*人偶转达失败*',
-        mdLine('用户ID', chatId),
+        mdLine('用户ID', senderKey),
         mdLine('错误', forwardReq.description || copyReq.description || 'Unknown error'),
       ].join('\n'),
       threadParam,
@@ -321,31 +330,32 @@ export async function processGuestMessageBatch(messages, config = null) {
   }
 
   if (deliveredAny) {
-    const guestTag = await getGuestTag(chatId);
-    const guestName = buildUserName(firstMessage.from || {}) + (guestTag ? ` [${guestTag}]` : '');
+    const guestName = (buildUserName(firstMessage.from || {}) || firstMessage.chat?.title || '匿名来源')
+      + (guestTag ? ` [${guestTag}]` : '');
     const fullText = messages.map((m) => m.text || m.caption || '').filter(Boolean).join('\n');
     await dispatchNotification('guest_message', {
-      senderId: chatId,
+      senderId: senderKey,
       senderName: guestName,
       messageCount: messages.length,
       text: fullText,
     });
-    await handleGuestDelivered(messages[messages.length - 1], config);
+    await handleGuestDelivered(firstMessage, config);
   }
 }
 
 export async function handleGuestDelivered(message, config = null) {
   if (!config) config = await getRuntimeConfig();
-  const chatId = String(message.chat.id);
+  const senderKey = getSenderKey(message);
+  const sourceChatId = String(message.chat.id);
 
   if (config.away_mode) {
     const awayMsg = config.away_message || '人偶现在外出中，稍后会尽快回复您的留言喵。';
-    await sendCooldownPlainText(chatId, `away-notice-${chatId}`, awayMsg, 1800000); // 30 minutes cooldown
+    await sendCooldownPlainText(sourceChatId, `away-notice-${senderKey}`, awayMsg, 1800000); // 30 minutes cooldown
   }
 
   await sendCooldownPlainText(
-    chatId,
-    `deliver-ack-${chatId}`,
+    sourceChatId,
+    `deliver-ack-${senderKey}`,
     '留言已经交给管理人啦，人偶会乖乖等回信喵。',
     getUserAckCooldownMs(),
   );
@@ -354,28 +364,55 @@ export async function handleGuestDelivered(message, config = null) {
 
 export async function handleNotify(message, config = null) {
   if (!config) config = await getRuntimeConfig();
-  const chatId = String(message.chat.id);
+  const senderKey = getSenderKey(message);
+  const sourceChatId = String(message.chat.id);
   const alertChatId = config.alert_chat_id || getAdminUid();
   if (!alertChatId) return;
 
   const extra = config.alert_thread_id ? { message_thread_id: config.alert_thread_id } : {};
 
-  if (await isFraud(chatId)) {
+  if (await isFraud(senderKey)) {
     await dispatchNotification('security_alert', {
       reason: '诈骗名单命中',
-      senderId: chatId,
+      senderId: senderKey,
       senderName: buildUserName(message.from || {}),
       detail: '命中本地/远程 fraud.db 诈骗黑名单',
     });
-    return sendMarkdown(alertChatId, `*诈骗库命中*\n${mdLine('UID', chatId)}`, extra);
+    return sendMarkdown(alertChatId, `*诈骗库命中*\n${mdLine('UID', senderKey)}`, extra);
   }
 
   if (!config.enable_notify) return;
 
-  const lastMsgTime = Number(await kvGetText(`lastmsg-${chatId}`, '0'));
+  const lastMsgTime = Number(await kvGetText(`lastmsg-${senderKey}`, '0'));
   if (!lastMsgTime || Date.now() - lastMsgTime > NOTIFY_INTERVAL) {
-    await kvPutText(`lastmsg-${chatId}`, String(Date.now()));
+    await kvPutText(`lastmsg-${senderKey}`, String(Date.now()));
     const notification = await fetchTextOrDefault(getNotificationUrl(), DEFAULT_NOTIFICATION);
     return sendMarkdown(alertChatId, notification, extra);
+  }
+}
+
+// 兜底清理：内联延迟等待被 Worker 生命周期中断时，遗留的待处理批次由 scheduled 触发补发
+export async function flushStalePendingBatches(config = null) {
+  if (!config) config = await getRuntimeConfig();
+  const staleAfterMs = (Math.max(config.delay_seconds || 0, MAX_INLINE_DELAY_SECONDS) + 10) * 1000;
+  const keys = await kvList('pending-msgs-');
+
+  for (const key of keys) {
+    const senderKey = String(key.name || '').replace(/^pending-msgs-/, '');
+    if (!senderKey) continue;
+    const batch = asArray(await kvGetJson(key.name, []));
+    if (!batch.length) continue;
+
+    const oldestMs = Math.min(...batch.map((m) => (m.date ? Number(m.date) * 1000 : Date.now())));
+    if (Date.now() - oldestMs < staleAfterMs) continue;
+
+    const tokenKey = `pending-token-${senderKey}`;
+    const token = await kvGetJson(tokenKey, null);
+    if (!token) continue; // 已被内联流程接管或处理完成
+
+    // 先抢占 token 再清批次，避免与仍在等待的内联流程双发
+    await kvPutJson(tokenKey, null, { expirationTtl: 60 });
+    await kvPutJson(key.name, null, { expirationTtl: 60 });
+    await processGuestMessageBatch(batch, config);
   }
 }

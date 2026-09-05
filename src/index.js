@@ -6,17 +6,35 @@
 import {
   WEBHOOK,
   ADMIN_COMMANDS,
+  ADMIN_GREETING,
   DEFAULT_START_MESSAGE,
   getSecret,
   getAdminUid,
   getForwardChatId,
   getAlertChatId,
+  getListenChatIds,
   getStartMsgUrl,
 } from './config.js';
 import { fetchTextOrDefault, isDuplicateUpdate, getBotUsername } from './cache.js';
 import { apiUrl, sendMarkdown, getCommand, formatStartMessage, leaveChat } from './telegram.js';
-import { handleGuestMessage, getMappedGuestId } from './pipeline.js';
+import { handleGuestMessage, getMappedGuestId, flushStalePendingBatches } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
+
+let secretWarningLogged = false;
+function warnMissingSecret() {
+  if (secretWarningLogged) return;
+  secretWarningLogged = true;
+  console.log(JSON.stringify({ warning: 'ENV_BOT_SECRET 未配置，webhook 处于无鉴权状态，任何人都可以伪造更新请求' }));
+}
+
+async function leaveUnauthorizedChat(chat) {
+  console.log(JSON.stringify({ event: 'auto-leave-unauthorized-chat', chatId: chat.id, chatType: chat.type || '' }));
+  try {
+    await leaveChat(chat.id);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'auto-leave-failed', chatId: chat.id, message: err.message }));
+  }
+}
 
 export async function handleFetch(request, env = null, ctx = null) {
   if (env) {
@@ -47,11 +65,21 @@ export async function handleFetch(request, env = null, ctx = null) {
 
 export async function handleWebhook(request, ctx = null) {
   const secret = getSecret();
-  if (secret && request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== secret) {
+  if (!secret) {
+    warnMissingSecret();
+  } else if (request.headers.get('X-Telegram-Bot-Api-Secret-Token') !== secret) {
     return new Response('Unauthorized', { status: 403 });
   }
 
-  const update = await request.json();
+  let update;
+  try {
+    update = await request.json();
+  } catch (err) {
+    // 仍返回 200，避免 Telegram 对异常载荷反复重试
+    console.log(JSON.stringify({ error: 'webhook-invalid-json', message: err.message }));
+    return new Response('Ok');
+  }
+
   if (ctx && typeof ctx.waitUntil === 'function') {
     ctx.waitUntil(onUpdate(update));
   } else {
@@ -69,6 +97,8 @@ export async function onUpdate(update) {
       await onMyChatMember(update.my_chat_member);
     } else if (update.message) {
       await onMessage(update.message);
+    } else if (update.channel_post) {
+      await onMessage(update.channel_post);
     } else if (update.callback_query) {
       await onCallbackQuery(update.callback_query);
     }
@@ -83,16 +113,18 @@ export async function onMyChatMember(myChatMember) {
   const isGroup = Boolean(chat.type && chat.type !== 'private');
   if (!isGroup) return;
 
+  const chatId = String(chat.id);
   const forwardChatId = getForwardChatId();
   const alertChatId = getAlertChatId();
-  const isAuthorized = (forwardChatId && String(chat.id) === forwardChatId) ||
-                       (alertChatId && String(chat.id) === alertChatId);
+  const isAuthorized = (forwardChatId && chatId === forwardChatId) ||
+                       (alertChatId && chatId === alertChatId) ||
+                       getListenChatIds().includes(chatId);
 
   // 被拉入未授权的陌生群组或频道时，自动退出
   if (!isAuthorized) {
     const status = myChatMember.new_chat_member?.status;
     if (status === 'member' || status === 'administrator') {
-      await leaveChat(chat.id).catch(() => {});
+      await leaveUnauthorizedChat(chat);
     }
   }
 }
@@ -100,33 +132,45 @@ export async function onMyChatMember(myChatMember) {
 export async function onMessage(message) {
   if (!message?.chat?.id) return;
 
-  const botUsername = await getBotUsername();
-  const command = getCommand(message, botUsername);
+  const chatId = String(message.chat.id);
   const isGroup = Boolean(message.chat.type && message.chat.type !== 'private');
+  // 频道帖不参与命令解析，只保留回复转达留言的管理流（reply → 消息映射）
+  const isChannel = message.chat.type === 'channel';
+
+  const botUsername = await getBotUsername();
+  const command = isChannel ? '' : getCommand(message, botUsername);
 
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
   const alertChatId = getAlertChatId();
   const isSenderAdmin = Boolean(adminUid && String(message.from?.id) === adminUid);
-  const isPrivateAdminChat = Boolean(adminUid && String(message.chat.id) === adminUid);
-  const isForwardChat = Boolean(forwardChatId && String(message.chat.id) === forwardChatId);
-  const isAlertChat = Boolean(alertChatId && String(message.chat.id) === alertChatId);
+  const isPrivateAdminChat = Boolean(adminUid && chatId === adminUid);
+  const isForwardChat = Boolean(forwardChatId && chatId === forwardChatId);
+  const isAlertChat = Boolean(alertChatId && chatId === alertChatId);
+  const isListenChat = getListenChatIds().includes(chatId);
 
   // 群聊 / 超级群 / 频道消息处理
   if (isGroup) {
-    const isAuthorizedGroup = isForwardChat || isAlertChat;
+    const isAuthorizedGroup = isForwardChat || isAlertChat || isListenChat;
 
-    // 收到未授权陌生群聊消息时，自动退群
+    // 收到未授权陌生群聊消息时，自动退出
     if (!isAuthorizedGroup) {
-      await leaveChat(message.chat.id).catch(() => {});
+      await leaveUnauthorizedChat(message.chat);
       return;
+    }
+
+    // 监听群 / 频道：成员发言当作客人留言转达（优先级低于管理台会话，避免同一会话双身份冲突）
+    if (isListenChat && !isForwardChat && !isAlertChat) {
+      // 忽略指令（防成员误触管理命令）与管理员本人的发言
+      if (command || isSenderAdmin) return;
+      return handleGuestMessage(message);
     }
 
     if (command === '/start') {
       if (isSenderAdmin) {
         return sendMarkdown(
           message.chat.id,
-          '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
+          ADMIN_GREETING,
           message.message_thread_id ? { message_thread_id: message.message_thread_id } : {},
         );
       }
@@ -152,10 +196,7 @@ export async function onMessage(message) {
   // 私聊消息处理
   if (command === '/start') {
     if (isPrivateAdminChat || isSenderAdmin) {
-      return sendMarkdown(
-        message.chat.id,
-        '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。',
-      );
+      return sendMarkdown(message.chat.id, ADMIN_GREETING);
     }
     const startMsg = await fetchTextOrDefault(getStartMsgUrl(), DEFAULT_START_MESSAGE);
     return sendMarkdown(message.chat.id, formatStartMessage(startMsg, message.from || {}));
@@ -175,13 +216,14 @@ export async function onMessage(message) {
 export async function registerWebhook(requestUrl) {
   const webhookUrl = `${requestUrl.protocol}//${requestUrl.hostname}${WEBHOOK}`;
   const secret = getSecret();
+  if (!secret) warnMissingSecret();
   const r = await fetch(apiUrl('setWebhook'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secret,
-      allowed_updates: ['message', 'callback_query', 'my_chat_member'],
+      allowed_updates: ['message', 'channel_post', 'callback_query', 'my_chat_member'],
       drop_pending_updates: true,
     }),
   }).then((response) => response.json());
@@ -220,5 +262,17 @@ export async function unRegisterWebhook() {
 export default {
   async fetch(request, env, ctx) {
     return handleFetch(request, env, ctx);
+  },
+  // 定时兜底：补发因 Worker 生命周期中断而遗留的延迟批次（需在 wrangler 配置 triggers.crons）
+  async scheduled(event, env, ctx) {
+    if (env) Object.assign(globalThis, env);
+    const task = flushStalePendingBatches().catch((err) => {
+      console.log(JSON.stringify({ error: 'flush-pending-batches-failed', message: err.message }));
+    });
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(task);
+    } else {
+      await task;
+    }
   },
 };

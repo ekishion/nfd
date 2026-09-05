@@ -11,6 +11,11 @@
   //     "id": "你的KV_ID填写在此处"
   //   }
   // ],
+  // 提示：配置了 ENV_FORWARD_DELAY_SECONDS 时建议启用定时触发器，兜底补发因 Worker
+  // 生命周期中断而遗留的延迟批次（KV 中超过延迟窗口仍未处理的 pending-msgs-*）：
+  // "triggers": {
+  //   "crons": ["*/1 * * * *"]
+  // },
   "rules": [
     {
       "type": "Text",

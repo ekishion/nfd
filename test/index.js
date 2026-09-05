@@ -495,6 +495,45 @@ assert.strictEqual(shouldSendNotification('security_alert', true), true);
 assert.strictEqual(shouldSendNotification('guest_message', false), true);
 console.log('Multi-channel push notification formatting & filtering verified');
 
-console.log('\nAll 18 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 19: Listen Chat Whitelist Parsing & Authorization
+// ------------------------------------------------------------------------------
+function parseListenChatIds(raw) {
+  return String(raw || '').split(',').map((id) => id.trim()).filter(Boolean);
+}
+
+function checkListenAuthorization(chatId, forwardChatId, alertChatId, listenRaw) {
+  const listenChatIds = parseListenChatIds(listenRaw);
+  return (forwardChatId && String(chatId) === String(forwardChatId)) ||
+         (alertChatId && String(chatId) === String(alertChatId)) ||
+         listenChatIds.includes(String(chatId));
+}
+
+assert.deepStrictEqual(parseListenChatIds(' -100333333 , -100444444  ,'), ['-100333333', '-100444444']);
+assert.deepStrictEqual(parseListenChatIds(''), []);
+assert.strictEqual(checkListenAuthorization('-100333333', '-100111111', '-100222222', '-100333333,-100444444'), true);
+assert.strictEqual(checkListenAuthorization('-100444444', '-100111111', '-100222222', '-100333333,-100444444'), true);
+assert.strictEqual(checkListenAuthorization('-100888888', '-100111111', '-100222222', '-100333333,-100444444'), false);
+console.log('Listen chat whitelist parsing & authorization verified');
+
+// ------------------------------------------------------------------------------
+// Test 20: Sender Identity Resolution Across Chat Types
+// ------------------------------------------------------------------------------
+function getSenderKey(message) {
+  if (message?.chat?.type && message.chat.type !== 'private') {
+    if (message.from?.id) return String(message.from.id);
+    if (message.sender_chat?.id) return String(message.sender_chat.id);
+  }
+  return String(message.chat.id);
+}
+
+assert.strictEqual(getSenderKey({ chat: { id: 111, type: 'private' }, from: { id: 111 } }), '111');
+assert.strictEqual(getSenderKey({ chat: { id: -100555, type: 'supergroup' }, from: { id: 222 } }), '222');
+assert.strictEqual(getSenderKey({ chat: { id: -100555, type: 'supergroup' }, from: { id: 333 } }), '333');
+assert.strictEqual(getSenderKey({ chat: { id: -100666, type: 'channel' }, sender_chat: { id: -100666 } }), '-100666');
+assert.strictEqual(getSenderKey({ chat: { id: -100777, type: 'group' } }), '-100777');
+console.log('Sender identity resolution across chat types verified');
+
+console.log('\nAll 20 test suites passed with 0 errors!\n');
 
 

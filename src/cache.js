@@ -69,6 +69,18 @@ export async function kvGetText(key, fallback = '') {
   }
 }
 
+export async function kvList(prefix, limit = 100) {
+  const kv = getKv();
+  if (!kv || typeof kv.list !== 'function') return [];
+  try {
+    const res = await kv.list({ prefix, limit });
+    return asArray(res?.keys);
+  } catch (err) {
+    console.log(JSON.stringify({ error: 'kvList-failed', prefix, message: err.message }));
+    return [];
+  }
+}
+
 export async function kvPutText(key, value, options = {}) {
   const kv = getKv();
   if (!kv) return;
@@ -226,8 +238,8 @@ export async function getGuestIdByTopic(topicId) {
 }
 
 // Guest Profiling System
-export async function trackGuestProfile(message) {
-  const chatId = String(message.chat.id);
+export async function trackGuestProfile(message, identityKey = null) {
+  const chatId = identityKey || String(message.chat.id);
   const key = `profile-${chatId}`;
   const now = Date.now();
   const current = (await kvGetJson(key, null)) || {

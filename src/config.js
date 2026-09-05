@@ -10,6 +10,8 @@ export const PARSE_MODE = 'MarkdownV2';
 export const NOTIFY_INTERVAL = 3600 * 1000;
 export const FRAUD_CACHE_TTL = 30 * 60 * 1000;
 export const MESSAGE_MAP_TTL = 30 * 24 * 3600;
+// Workers waitUntil 墙钟上限约 30 秒，内联延迟需留出余量，超出部分由 scheduled 兜底
+export const MAX_INLINE_DELAY_SECONDS = 25;
 
 export function getToken() {
   return getOptionalEnv('ENV_BOT_TOKEN');
@@ -39,6 +41,13 @@ export function getAlertChatId() {
 export function getAlertThreadId() {
   const tid = getOptionalEnv('ENV_ALERT_THREAD_ID');
   return tid && /^\d+$/.test(tid) ? Number(tid) : null;
+}
+
+export function getListenChatIds() {
+  return String(getOptionalEnv('ENV_LISTEN_CHAT_IDS', ''))
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
 }
 
 export function getEnableForumTopics() {
@@ -111,6 +120,8 @@ export const ADMIN_COMMANDS = new Set([
   '/user',
   '/tag',
 ]);
+
+export const ADMIN_GREETING = '*管理人好喵*，这里是人偶！\n\n发送 `/panel` 可打开交互式控制面板，发送 `/help` 可查看管理手册。';
 
 export const DEFAULT_START_MESSAGE = typeof defaultStartMessage === 'string' && defaultStartMessage
   ? defaultStartMessage.trim()

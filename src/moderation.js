@@ -15,7 +15,7 @@ import {
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
-import { requestTelegram, getMessageText, sendMarkdown, mdLine, buildUserName } from './telegram.js';
+import { requestTelegram, getMessageText, sendMarkdown, mdLine, buildUserName, getSenderKey } from './telegram.js';
 import { dispatchNotification } from './notifiers/index.js';
 
 export function normalizeMessageText(text = '') {
@@ -184,8 +184,8 @@ export async function findBlockedKeyword(message) {
 }
 
 export async function recordKeywordViolation(message, keyword) {
-  const chatId = String(message.chat.id);
-  const key = `keyword-violation-${chatId}`;
+  const senderKey = getSenderKey(message);
+  const key = `keyword-violation-${senderKey}`;
   const current = await kvGetJson(key, { count: 0, expiresAt: 0 });
   const now = Date.now();
   const count = current.expiresAt > now ? Number(current.count || 0) + 1 : 1;
@@ -205,11 +205,12 @@ export async function notifyKeywordBlocked(message, matchResult, violation, conf
   const ruleName = typeof matchResult === 'string' ? matchResult : matchResult.rule;
   const snippet = typeof matchResult === 'object' && matchResult?.snippet ? matchResult.snippet : '';
   const senderName = buildUserName(message.from || {});
+  const senderKey = getSenderKey(message);
 
   // Dispatch multi-channel notification
   await dispatchNotification('security_alert', {
     reason: '触发敏感关键词',
-    senderId: message.chat.id,
+    senderId: senderKey,
     senderName,
     detail: `触发规则: ${ruleName} (违规次数: ${violation.count})`,
     snippet,
@@ -228,10 +229,13 @@ export async function notifyKeywordBlocked(message, matchResult, violation, conf
     lines.push(mdLine('命中切片', snippet));
   }
 
+  lines.push(mdLine('客人', senderName));
+  if (message.chat?.type && message.chat.type !== 'private') {
+    lines.push(mdLine('来源会话', `${message.chat.title || message.chat.id} / ${message.chat.type}`));
+  }
   lines.push(
     mdLine('累计次数', violation.count),
-    mdLine('用户ID', message.chat.id),
-    mdLine('客人', buildUserName(message.from || {})),
+    mdLine('用户ID', senderKey),
   );
 
   if (config.auto_block && violation.count >= config.violation_limit) {
