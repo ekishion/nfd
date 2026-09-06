@@ -18,10 +18,11 @@ const SRC_DIR = path.join(__dirname, 'src');
 const DATA_DIR = path.join(__dirname, 'data');
 const OUTPUT_FILE = path.join(__dirname, 'worker.js');
 
-// 外部推送子通道：任一环境变量命中即打包对应通道实现
+// 外部推送子通道：密钥或启用开关（ENV_ENABLE_*）任一命中即打包对应通道实现。
+// 密钥只放 Cloudflare 密钥时，用 GitHub Variables 配置 ENV_ENABLE_*=true 参与裁剪
 const NOTIFIER_MAP = [
-  { key: 'pushdeer', file: 'notifiers/pushdeer.js', env: 'ENV_PUSHDEER_KEY' },
-  { key: 'serverchan', file: 'notifiers/serverchan.js', env: 'ENV_SERVERCHAN_KEY' },
+  { key: 'pushdeer', file: 'notifiers/pushdeer.js', env: 'ENV_PUSHDEER_KEY', enableEnv: 'ENV_ENABLE_PUSHDEER' },
+  { key: 'serverchan', file: 'notifiers/serverchan.js', env: 'ENV_SERVERCHAN_KEY', enableEnv: 'ENV_ENABLE_SERVERCHAN' },
 ];
 
 // 可选功能模块注册表：新增可裁剪功能时在此登记 name / file / mode / envs / stub
@@ -87,8 +88,8 @@ function resolveActiveModules() {
   // Find which notifier channels have environment variables configured
   const activeChannels = NOTIFIER_MAP.filter((item) => {
     if (isBuildAll) return true;
-    const val = process.env[item.env];
-    return val && String(val).trim().length > 0;
+    if (isEnvConfigured([item.env])) return true;
+    return String(process.env[item.enableEnv] || '').trim().toLowerCase() === 'true';
   });
 
   const baseModules = [

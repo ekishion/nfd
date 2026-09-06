@@ -616,6 +616,25 @@ assert.strictEqual(isFeatureActive(optInFeature, {}, true), true);
 assert.strictEqual(isFeatureActive(optOutFeature, { ENV_ENABLE_FRAUD_CHECK: 'false' }, true), true);
 console.log('Feature gate resolution (optIn / optOut / --all) verified');
 
-console.log('\nAll 22 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 23: Notifier Channel Gate (key / enable flag / --all)
+// ------------------------------------------------------------------------------
+function isChannelActive(channel, env, isBuildAll = false) {
+  if (isBuildAll) return true;
+  if (env[channel.env] && String(env[channel.env]).trim().length > 0) return true;
+  return String(env[channel.enableEnv] || '').trim().toLowerCase() === 'true';
+}
+
+const pushdeerChannel = { env: 'ENV_PUSHDEER_KEY', enableEnv: 'ENV_ENABLE_PUSHDEER' };
+
+assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_PUSHDEER_KEY: 'abc' }), true);
+assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'true' }), true);
+assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'TRUE' }), true);
+assert.strictEqual(isChannelActive(pushdeerChannel, {}), false);
+assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'false' }), false);
+assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'false' }, true), true);
+console.log('Notifier channel gate (key / enable flag) verified');
+
+console.log('\nAll 23 test suites passed with 0 errors!\n');
 
 

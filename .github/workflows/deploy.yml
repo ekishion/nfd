@@ -10,34 +10,39 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # 变量映射提升到 job 级：构建期按需裁剪（node build.js）与运行时注入（wrangler vars）共用同一份变量
+    # 变量映射提升到 job 级：构建期按需裁剪（node build.js）与运行时注入（wrangler vars）共用同一份变量。
+    # 读取来源与存放策略一一对应：部署凭据只读 Secrets，业务变量只读 Variables——配错位置会被直接忽略
     env:
-      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID || vars.KV_NAMESPACE_ID }}
-      ENV_ADMIN_UID: ${{ secrets.ENV_ADMIN_UID || vars.ENV_ADMIN_UID }}
-      ENV_FORWARD_CHAT_ID: ${{ secrets.ENV_FORWARD_CHAT_ID || vars.ENV_FORWARD_CHAT_ID }}
-      ENV_FORWARD_THREAD_ID: ${{ secrets.ENV_FORWARD_THREAD_ID || vars.ENV_FORWARD_THREAD_ID }}
-      ENV_FORWARD_DELAY_SECONDS: ${{ secrets.ENV_FORWARD_DELAY_SECONDS || vars.ENV_FORWARD_DELAY_SECONDS }}
-      ENV_ALERT_CHAT_ID: ${{ secrets.ENV_ALERT_CHAT_ID || vars.ENV_ALERT_CHAT_ID }}
-      ENV_ALERT_THREAD_ID: ${{ secrets.ENV_ALERT_THREAD_ID || vars.ENV_ALERT_THREAD_ID }}
-      ENV_ENABLE_FORUM_TOPICS: ${{ secrets.ENV_ENABLE_FORUM_TOPICS || vars.ENV_ENABLE_FORUM_TOPICS }}
-      ENV_ENABLE_FRAUD_CHECK: ${{ secrets.ENV_ENABLE_FRAUD_CHECK || vars.ENV_ENABLE_FRAUD_CHECK }}
-      ENV_LISTEN_CHAT_IDS: ${{ secrets.ENV_LISTEN_CHAT_IDS || vars.ENV_LISTEN_CHAT_IDS }}
-      ENV_BOT_COMMANDS: ${{ secrets.ENV_BOT_COMMANDS || vars.ENV_BOT_COMMANDS }}
-      ENV_REQUIRE_USERNAME: ${{ secrets.ENV_REQUIRE_USERNAME || vars.ENV_REQUIRE_USERNAME }}
-      ENV_REQUIRE_PHOTO: ${{ secrets.ENV_REQUIRE_PHOTO || vars.ENV_REQUIRE_PHOTO }}
-      ENV_AUTO_BLOCK_KEYWORD_VIOLATORS: ${{ secrets.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS || vars.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS }}
-      ENV_KEYWORD_VIOLATION_LIMIT: ${{ secrets.ENV_KEYWORD_VIOLATION_LIMIT || vars.ENV_KEYWORD_VIOLATION_LIMIT }}
-      ENV_ENABLE_FLOOD_PROTECTION: ${{ secrets.ENV_ENABLE_FLOOD_PROTECTION || vars.ENV_ENABLE_FLOOD_PROTECTION }}
-      ENV_BLOCK_EXECUTABLES: ${{ secrets.ENV_BLOCK_EXECUTABLES || vars.ENV_BLOCK_EXECUTABLES }}
-      ENV_AWAY_MODE: ${{ secrets.ENV_AWAY_MODE || vars.ENV_AWAY_MODE }}
-      ENV_AWAY_MESSAGE: ${{ secrets.ENV_AWAY_MESSAGE || vars.ENV_AWAY_MESSAGE }}
-      ENV_FRAUD_DB_URL: ${{ secrets.ENV_FRAUD_DB_URL || vars.ENV_FRAUD_DB_URL }}
-      ENV_KEYWORD_DB_URL: ${{ secrets.ENV_KEYWORD_DB_URL || vars.ENV_KEYWORD_DB_URL }}
-      ENV_START_MESSAGE_URL: ${{ secrets.ENV_START_MESSAGE_URL || vars.ENV_START_MESSAGE_URL }}
-      ENV_PUSHDEER_KEY: ${{ secrets.ENV_PUSHDEER_KEY || vars.ENV_PUSHDEER_KEY }}
-      ENV_PUSHDEER_URL: ${{ secrets.ENV_PUSHDEER_URL || vars.ENV_PUSHDEER_URL }}
-      ENV_SERVERCHAN_KEY: ${{ secrets.ENV_SERVERCHAN_KEY || vars.ENV_SERVERCHAN_KEY }}
-      ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY: ${{ secrets.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY || vars.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY }}
+      KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
+      ENV_FORWARD_CHAT_ID: ${{ vars.ENV_FORWARD_CHAT_ID }}
+      ENV_FORWARD_THREAD_ID: ${{ vars.ENV_FORWARD_THREAD_ID }}
+      ENV_FORWARD_DELAY_SECONDS: ${{ vars.ENV_FORWARD_DELAY_SECONDS }}
+      ENV_ALERT_CHAT_ID: ${{ vars.ENV_ALERT_CHAT_ID }}
+      ENV_ALERT_THREAD_ID: ${{ vars.ENV_ALERT_THREAD_ID }}
+      ENV_ENABLE_FORUM_TOPICS: ${{ vars.ENV_ENABLE_FORUM_TOPICS }}
+      ENV_ENABLE_FRAUD_CHECK: ${{ vars.ENV_ENABLE_FRAUD_CHECK }}
+      ENV_ENABLE_PUSHDEER: ${{ vars.ENV_ENABLE_PUSHDEER }}
+      ENV_ENABLE_SERVERCHAN: ${{ vars.ENV_ENABLE_SERVERCHAN }}
+      ENV_LISTEN_CHAT_IDS: ${{ vars.ENV_LISTEN_CHAT_IDS }}
+      ENV_BOT_COMMANDS: ${{ vars.ENV_BOT_COMMANDS }}
+      ENV_REQUIRE_USERNAME: ${{ vars.ENV_REQUIRE_USERNAME }}
+      ENV_REQUIRE_PHOTO: ${{ vars.ENV_REQUIRE_PHOTO }}
+      ENV_AUTO_BLOCK_KEYWORD_VIOLATORS: ${{ vars.ENV_AUTO_BLOCK_KEYWORD_VIOLATORS }}
+      ENV_KEYWORD_VIOLATION_LIMIT: ${{ vars.ENV_KEYWORD_VIOLATION_LIMIT }}
+      ENV_ENABLE_FLOOD_PROTECTION: ${{ vars.ENV_ENABLE_FLOOD_PROTECTION }}
+      ENV_BLOCK_EXECUTABLES: ${{ vars.ENV_BLOCK_EXECUTABLES }}
+      ENV_AWAY_MODE: ${{ vars.ENV_AWAY_MODE }}
+      ENV_AWAY_MESSAGE: ${{ vars.ENV_AWAY_MESSAGE }}
+      ENV_FLOOD_LIMIT: ${{ vars.ENV_FLOOD_LIMIT }}
+      ENV_FLOOD_WINDOW_SECONDS: ${{ vars.ENV_FLOOD_WINDOW_SECONDS }}
+      ENV_FLOOD_MUTE_SECONDS: ${{ vars.ENV_FLOOD_MUTE_SECONDS }}
+      ENV_FRAUD_DB_URL: ${{ vars.ENV_FRAUD_DB_URL }}
+      ENV_KEYWORD_DB_URL: ${{ vars.ENV_KEYWORD_DB_URL }}
+      ENV_START_MESSAGE_URL: ${{ vars.ENV_START_MESSAGE_URL }}
+      ENV_PUSHDEER_KEY: ${{ vars.ENV_PUSHDEER_KEY }}
+      ENV_PUSHDEER_URL: ${{ vars.ENV_PUSHDEER_URL }}
+      ENV_SERVERCHAN_KEY: ${{ vars.ENV_SERVERCHAN_KEY }}
+      ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY: ${{ vars.ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -66,7 +71,8 @@ jobs:
             vars: {}
           };
           // 仅收集非敏感的普通配置参数，敏感密钥严格由用户在 Cloudflare 控制台直接配置
-          const excludedKeys = new Set(["ENV_BOT_TOKEN", "ENV_BOT_SECRET", "CF_API_TOKEN", "CF_ACCOUNT_ID", "KV_NAMESPACE_ID"]);
+          // （ENV_ADMIN_UID 属于敏感凭据，只存 Cloudflare 加密密钥，不随部署注入明文变量）
+          const excludedKeys = new Set(["ENV_BOT_TOKEN", "ENV_BOT_SECRET", "ENV_ADMIN_UID", "CF_API_TOKEN", "CF_ACCOUNT_ID", "KV_NAMESPACE_ID"]);
           for (const [k, v] of Object.entries(process.env)) {
             if (k.startsWith("ENV_") && !excludedKeys.has(k) && v && v.trim()) {
               config.vars[k] = v.trim();
@@ -86,6 +92,6 @@ jobs:
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
-          apiToken: ${{ secrets.CF_API_TOKEN || vars.CF_API_TOKEN }}
-          accountId: ${{ secrets.CF_ACCOUNT_ID || vars.CF_ACCOUNT_ID }}
+          apiToken: ${{ secrets.CF_API_TOKEN }}
+          accountId: ${{ secrets.CF_ACCOUNT_ID }}
           command: deploy worker.js --config wrangler.json

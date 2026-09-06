@@ -13,7 +13,7 @@
 | **Server酱（Turbo版）** | `ENV_SERVERCHAN_KEY` | SendKey 微信服务号通知密钥 |
 | **过滤控制** | `ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY` | 设为 `true` 时仅在触发安全拦截报警时外发，正常留言不外发（默认 `false`） |
 
-> **按需打包提示**：推送通道模块遵循「环境变量未配置就不参与打包」的构建裁剪机制。使用 GitHub Actions 部署时，请将 `ENV_PUSHDEER_KEY` / `ENV_SERVERCHAN_KEY` 配置为仓库 Variables 或 Secrets（工作流会同时提供给构建与运行时）；单文件部署请在本地构建前导出对应变量。仅在 Cloudflare 控制台配置运行时变量、构建时未配置的话，推送模块不会被打进 `worker.js`。详见[按需打包机制](deployment.md#按需打包构建裁剪机制)。
+> **按需打包提示**：推送通道模块遵循「环境变量未配置就不参与打包」的构建裁剪机制。密钥可以放 GitHub Variables（构建与运行时都能看到），也可以只存 Cloudflare 加密密钥（更安全）——后者需在 GitHub Variables 额外配置 `ENV_ENABLE_PUSHDEER` / `ENV_ENABLE_SERVERCHAN` = `true` 让对应通道参与构建裁剪。详见[按需打包机制](deployment.md#按需打包构建裁剪机制)与[环境变量存放策略](deployment.md#1-准备凭据并配置-github)。
 
 ---
 

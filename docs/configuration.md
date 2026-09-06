@@ -1,47 +1,98 @@
 # 配置与管理手册
 
-本文档说明环境变量、私密群聊与论坛话题路由配置、动态控制面板参数、关键词与正则审查规则、快捷回复、离开模式以及数据文件的维护方式。
+本文档按类别说明全部环境变量，并覆盖群聊转发、监听模式、命令菜单、控制面板、审查规则、数据文件与管理指令的使用方式。
 
 ---
 
-## 环境变量配置表
+## 环境变量
 
-| 变量名 | 类型 | 默认值 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `ENV_BOT_TOKEN` | 必填 | - | Telegram Bot Token，从 @BotFather 获取 |
-| `ENV_BOT_SECRET` | 必填 | - | Webhook 请求认证密钥（建议使用 UUID） |
-| `ENV_ADMIN_UID` | 必填 | - | 管理员的 Telegram 纯数字用户 ID |
-| `ENV_FORWARD_CHAT_ID` | 可选 | `ENV_ADMIN_UID` | 正常客人留言接收的目标会话 ID（可以是管理员私聊或 `-100` 开头的私密超级群 ID） |
-| `ENV_FORWARD_THREAD_ID` | 可选 | - | 正常客人留言投递的固定话题 ID（`message_thread_id`） |
-| `ENV_ALERT_CHAT_ID` | 可选 | `ENV_FORWARD_CHAT_ID` | 拦截告警通知接收的目标会话 ID（可独立配置为专用报警群或频道） |
-| `ENV_ALERT_THREAD_ID` | 可选 | - | 拦截告警通知投递的目标话题 ID（例如群内的拦截通知专属话题） |
-| `ENV_ENABLE_FORUM_TOPICS` | 可选 | `false` | 设为 `true` 时，在论坛超级群内自动为每位新客人创建专属独立话题 |
-| `ENV_LISTEN_CHAT_IDS` | 可选 | - | 监听模式白名单：逗号分隔的群聊/频道 ID 列表。机器人会把白名单会话内成员的发言当作客人留言转达，未列入白名单的群组仍会被自动退出。详见[监听群聊/频道配置指引](#监听群聊频道留言来源配置指引) |
-| `ENV_BOT_COMMANDS` | 可选 | - | 自定义 Bot 命令菜单（`setMyCommands`）。支持 JSON 数组或 `panel:控制面板,stats:统计数据` 简写格式。**未配置时不注册任何命令菜单**，且该功能模块不参与打包。详见[自定义命令菜单](#自定义命令菜单) |
-| `ENV_FORWARD_DELAY_SECONDS` | 可选 | `0` | 转发缓冲延迟秒数。汇总该时间段内的连续消息统一审查后一起转发。设为 0 为即时转发。注意：Worker 单次请求最长存活约 30 秒，内联等待上限为 25 秒，建议同时在 `wrangler.jsonc` 启用每分钟的 `triggers.crons` 定时兜底补发遗留批次 |
-| `ENV_REQUIRE_USERNAME` | 可选 | `false` | 设为 `true` 时拦截未设置 Telegram 用户名（`@username`）的客人留言 |
-| `ENV_REQUIRE_PHOTO` | 可选 | `false` | 设为 `true` 时拦截未设置个人头像的客人留言（别名 `ENV_REQUIRE_AVATAR`） |
-| `ENV_KEYWORD_NOTICE_TO_ADMIN` | 可选 | `true` | 触发关键词拦截时，是否向管理员/报警群发送拦截通报 |
-| `ENV_KEYWORD_NOTICE_TO_USER` | 可选 | `true` | 触发关键词拦截时，是否向客人回复提示信息 |
-| `ENV_AUTO_BLOCK_KEYWORD_VIOLATORS` | 可选 | `true` | 是否在客人多次违规触发关键词后自动加入黑名单 |
-| `ENV_KEYWORD_VIOLATION_LIMIT` | 可选 | `3` | 自动拉黑前的关键词违规次数上限 |
-| `ENV_KEYWORD_VIOLATION_TTL_SECONDS` | 可选 | `86400` | 关键词违规计数的统计有效时间窗口（秒） |
-| `ENV_ENABLE_FLOOD_PROTECTION` | 可选 | `true` | 是否开启防刷屏频控（10 秒内超过 5 条自动静音 60 秒） |
-| `ENV_BLOCK_EXECUTABLES` | 可选 | `true` | 是否拦截 `.exe`、`.apk`、`.bat` 等危险可执行附件 |
-| `ENV_AWAY_MODE` | 可选 | `false` | 是否开启离开模式（向留言客人自动回复离线说明） |
-| `ENV_ENABLE_NOTIFICATION` | 可选 | `true` | 是否向客人发送定期安全交易提醒 |
-| `ENV_USER_ACK_COOLDOWN_MS` | 可选 | `30000` | 留言成功转达后向客人发送回执的冷却时间（毫秒） |
-| `ENV_COMMAND_WARNING_COOLDOWN_MS` | 可选 | `60000` | 客人误触管理指令或被拦截提示的冷却时间（毫秒） |
-| `ENV_START_MESSAGE_URL` | 可选 | - | 自定义 /start 启动文案的远程 URL（MarkdownV2） |
-| `ENV_NOTIFICATION_URL` | 可选 | - | 自定义交易安全提醒文案的远程 URL（MarkdownV2） |
-| `ENV_FRAUD_DB_URL` | 可选 | - | 自定义诈骗 UID 名单数据库的远程 URL |
-| `ENV_PUSHDEER_KEY` | 可选 | - | PushDeer 客户端 PushKey（支持逗号分隔多个 Key） |
-| `ENV_PUSHDEER_URL` | 可选 | - | （可选）自建 PushDeer 服务的完整 API 端点地址 |
-| `ENV_SERVERCHAN_KEY` | 可选 | - | Server酱（Turbo版）SendKey 微信推送密钥 |
-| `ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY` | 可选 | `false` | 设为 `true` 时仅在触发安全拦截报警时外发推送，正常留言不外发 |
-| `ENV_ENABLE_FRAUD_CHECK` | 可选 | `true` | 诈骗库检测开关。显式设为 `false`/`0`/`off`/`no` 时关闭：运行期跳过检测，构建期该功能模块不参与打包 |
+变量按用途分为九类，除「基础配置」外均为可选。标注「按需打包」的变量同时控制构建裁剪，机制说明见[部署指南](deployment.md#按需打包构建裁剪机制)。
 
-> **按需打包提示**：上表中部分可选功能遵循「环境变量未配置就不参与打包」的构建裁剪机制（外部推送、命令菜单、论坛话题、远程自定义文案等），仅在 Cloudflare 控制台配置运行时变量无法让已被裁剪的模块生效，详见[按需打包（构建裁剪）机制](deployment.md#按需打包构建裁剪机制)。
+### 基础配置（必填）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_BOT_TOKEN` | - | Telegram Bot Token，从 @BotFather 获取 |
+| `ENV_BOT_SECRET` | - | Webhook 请求认证密钥（建议使用 UUID） |
+| `ENV_ADMIN_UID` | - | 管理员的 Telegram 纯数字用户 ID |
+
+> 这三个变量属于敏感凭据，存放在 **Cloudflare Worker 的加密密钥**中（控制台 -> 变量和机密 -> 加密保存），不要配置到 GitHub——GitHub 侧只放部署凭据与非敏感文本变量，存放策略见[部署指南](deployment.md#1-准备凭据并配置-github)。
+
+### 留言转发与告警（去向）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_FORWARD_CHAT_ID` | `ENV_ADMIN_UID` | 客人留言转达的目标会话 ID（管理员私聊或 `-100` 开头的私密超级群 ID） |
+| `ENV_FORWARD_THREAD_ID` | - | 留言投递的固定话题 ID（`message_thread_id`） |
+| `ENV_ALERT_CHAT_ID` | `ENV_FORWARD_CHAT_ID` | 拦截告警通知的接收会话 ID（可独立配置为专用报警群或频道） |
+| `ENV_ALERT_THREAD_ID` | - | 拦截告警通知投递的话题 ID（例如群内的拦截通知专属话题） |
+| `ENV_ENABLE_FORUM_TOPICS` | `false`（按需打包） | 设为 `true` 时，在论坛超级群内自动为每位新客人创建专属独立话题 |
+| `ENV_FORWARD_DELAY_SECONDS` | `0`（别名 `ENV_FORWARD_DELAY`） | 转发缓冲延迟秒数，汇总该时间段内的连续消息统一审查后一起转发；设为 `0` 为即时转发。Worker 单次请求最长存活约 30 秒，内联等待上限为 25 秒，建议同时在 `wrangler.jsonc` 启用每分钟的 `triggers.crons` 定时兜底补发遗留批次 |
+
+### 监听模式（来源）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_LISTEN_CHAT_IDS` | - | 逗号分隔的群聊/频道 ID 白名单。机器人把白名单会话内成员的发言当作客人留言转达，未列入白名单的群组仍会被自动退出。配置步骤见[场景四](#场景四监听群聊频道把群频道作为留言来源) |
+
+### 留言审查与防护
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_REQUIRE_USERNAME` | `false` | 设为 `true` 时拦截未设置 Telegram 用户名（`@username`）的客人留言 |
+| `ENV_REQUIRE_PHOTO` | `false` | 设为 `true` 时拦截未设置个人头像的客人留言（别名 `ENV_REQUIRE_AVATAR`） |
+| `ENV_ENABLE_FLOOD_PROTECTION` | `true` | 防刷屏频控：统计窗口内超过条数上限自动静音，阈值可用下方三个变量调整 |
+| `ENV_FLOOD_LIMIT` | `5` | 频控窗口内允许的最大消息条数 |
+| `ENV_FLOOD_WINDOW_SECONDS` | `10` | 频控统计窗口（秒） |
+| `ENV_FLOOD_MUTE_SECONDS` | `60` | 触发频控后的静音时长（秒） |
+| `ENV_BLOCK_EXECUTABLES` | `true` | 拦截 `.exe`、`.apk`、`.bat` 等危险可执行附件 |
+| `ENV_ENABLE_FRAUD_CHECK` | `true`（默认开启，可关闭） | 诈骗库检测开关。显式设为 `false`/`0`/`off`/`no` 时关闭：运行期跳过检测，构建期该功能模块不参与打包 |
+
+### 关键词拦截
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_KEYWORD_NOTICE_TO_ADMIN` | `true` | 触发关键词拦截时，是否向管理员/报警群发送拦截通报 |
+| `ENV_KEYWORD_NOTICE_TO_USER` | `true` | 触发关键词拦截时，是否向客人回复提示信息 |
+| `ENV_AUTO_BLOCK_KEYWORD_VIOLATORS` | `true` | 客人多次触发关键词后是否自动加入黑名单 |
+| `ENV_KEYWORD_VIOLATION_LIMIT` | `3` | 自动拉黑前的关键词违规次数上限 |
+| `ENV_KEYWORD_VIOLATION_TTL_SECONDS` | `86400` | 关键词违规计数的统计有效时间窗口（秒） |
+
+### 客人提示与回执
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_AWAY_MODE` | `false` | 离开模式（向留言客人自动回复离线说明） |
+| `ENV_AWAY_MESSAGE` | `人偶现在外出中，稍后会尽快回复您的留言喵。` | 离开模式的自动回复文案 |
+| `ENV_ENABLE_NOTIFICATION` | `true` | 是否向客人发送定期安全交易提醒 |
+| `ENV_USER_ACK_COOLDOWN_MS` | `30000` | 留言转达后向客人发送回执的冷却时间（毫秒） |
+| `ENV_COMMAND_WARNING_COOLDOWN_MS` | `60000` | 客人误触管理指令或被拦截提示的冷却时间（毫秒） |
+
+### 命令菜单（按需打包）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_BOT_COMMANDS` | - | 自定义 Bot 命令菜单（`setMyCommands`），支持 JSON 数组或 `panel:控制面板,stats:统计数据` 简写格式。未配置时不注册任何命令菜单。写法见[自定义命令菜单](#自定义命令菜单) |
+
+### 外部推送（按需打包）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_PUSHDEER_KEY` | - | PushDeer 客户端 PushKey（支持逗号分隔多个 Key） |
+| `ENV_PUSHDEER_URL` | - | 自建 PushDeer 服务的完整 API 端点地址，缺省使用官方云端 |
+| `ENV_SERVERCHAN_KEY` | - | Server酱（Turbo版）SendKey 微信推送密钥 |
+| `ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY` | `false` | 设为 `true` 时仅在触发安全拦截报警时外发推送，正常留言不外发。接入步骤见[外部推送配置手册](notifications.md) |
+
+> 推送密钥（`ENV_PUSHDEER_KEY` / `ENV_SERVERCHAN_KEY`）也可以只存 Cloudflare 加密密钥：此时在 GitHub Variables 把对应的 `ENV_ENABLE_PUSHDEER` / `ENV_ENABLE_SERVERCHAN` 设为 `true`，让通道参与构建裁剪。
+
+### 文案与远程数据源（部分按需打包）
+
+| 变量名 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `ENV_START_MESSAGE_URL` | - | `/start` 启动文案的远程 URL（MarkdownV2），未配置时使用 `data/startMessage.md` |
+| `ENV_NOTIFICATION_URL` | - | 交易安全提醒文案的远程 URL（MarkdownV2），未配置时使用 `data/notification.txt` |
+| `ENV_FRAUD_DB_URL` | 项目仓库内置 `data/fraud.db` | 诈骗 UID 名单数据库的远程 URL |
+| `ENV_KEYWORD_DB_URL` | 项目仓库内置 `data/keyword.db` | 敏感关键词与正则规则的远程 URL，`/synckeywords` 从这里同步规则 |
 
 ---
 

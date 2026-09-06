@@ -9,8 +9,8 @@ No Fraud / Node Forward Bot
 - GitHub Actions 自动化 CI/CD 构建与部署，代码公开且凭据隔离。
 - Telegram 内联按钮控制面板（`/panel`），直接在聊天中调节拦截规则与延迟时间。
 - 内存与 KV 双层缓存架构，降低 Cloudflare KV 读写频率。
-- 消息延迟缓冲与批量聚合，在设定时间窗口内汇总同一用户的多条消息统一转达。
-- 多级审查与防护体系：
+- 消息延迟缓冲：在设定时间窗口内汇总同一用户的多条消息，统一审查后一起转达。
+- 审查与防护：
   - 黑名单用户静音拦截
   - 未设置 Telegram 用户名（`@username`）拦截
   - 未设置个人头像拦截
@@ -23,8 +23,8 @@ No Fraud / Node Forward Bot
   - 支持论坛超级群模式，自动为每位新客人创建专属独立话题
   - 对话消息与拦截报警日志支持双通道独立分流
 - 监听模式（`ENV_LISTEN_CHAT_IDS`）：将指定群聊/频道设为留言来源，成员发言会按发送者身份转达给管理人，未列入白名单的群组仍自动退出。
-- 按需打包：构建时按环境变量裁剪可选功能（外部推送、命令菜单、论坛话题、远程文案、诈骗库检测等），未配置的模块不进入最终产物，构建日志直观展示产物构成。
-- 外部推送引擎：支持将客人留言与安全告警实时同步推送到外部平台。
+- 按需打包：构建时按环境变量裁剪可选功能（外部推送、命令菜单、论坛话题、远程文案、诈骗库检测等），未配置的模块不进入最终产物，构建日志列出每个模块的打包结果。
+- 外部推送：客人留言与安全告警可实时推送到手机或微信（PushDeer / Server酱）。
 - 双向消息转达：管理员直接回复转发消息即可回传给原用户，并支持一键撤回。
 
 ## 项目结构
@@ -64,9 +64,9 @@ nfd/
 
 ### 方式一：GitHub Actions 自动部署（推荐）
 
-1. 在 GitHub 仓库配置发布凭据（`CF_API_TOKEN`、`CF_ACCOUNT_ID`）与业务变量（`KV_NAMESPACE_ID`、`ENV_ADMIN_UID` 等）。
+1. 在 GitHub 仓库配置部署凭据（`CF_API_TOKEN`、`CF_ACCOUNT_ID`、`KV_NAMESPACE_ID`）与非敏感业务变量（`ENV_FORWARD_CHAT_ID` 等），敏感凭据（Bot Token 等）留待下一步配到 Cloudflare。
 2. 推送代码至 `main` 分支，或在 Actions 页面点击 Run workflow 自动创建并部署 Worker。
-3. 进入 Cloudflare Worker 控制台（设置 -> 变量和机密），添加 `ENV_BOT_TOKEN` 与 `ENV_BOT_SECRET` 并加密保存。
+3. 进入 Cloudflare Worker 控制台（设置 -> 变量和机密），添加 `ENV_BOT_TOKEN`、`ENV_BOT_SECRET`、`ENV_ADMIN_UID` 并加密保存。
 4. 访问 `https://你的worker域名/registerWebhook?secret=你的ENV_BOT_SECRET` 完成激活。
 
 详细参数与说明见 [部署指南](docs/deployment.md)。
