@@ -241,7 +241,7 @@ export async function processGuestMessageBatch(messages, config = null) {
   let blockedResult = null;
   let violatingMessage = null;
   for (const msg of messages) {
-    const match = await findBlockedKeyword(msg);
+    const match = await findBlockedKeyword(msg, config);
     if (match && match.matched) {
       blockedResult = match;
       violatingMessage = msg;

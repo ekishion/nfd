@@ -149,6 +149,15 @@ export function getNotifyChannelsOnAlertOnly() {
   return getOptionalEnv('ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY', 'false') === 'true';
 }
 
+export function hasExternalNotifier() {
+  return Boolean(
+    getPushdeerKey() ||
+    getServerchanKey() ||
+    getOptionalEnv('ENV_ENABLE_PUSHDEER') === 'true' ||
+    getOptionalEnv('ENV_ENABLE_SERVERCHAN') === 'true'
+  );
+}
+
 export const ADMIN_COMMANDS = new Set([
   '/help',
   '/panel',
@@ -197,12 +206,14 @@ export function getDefaultEnvConfig() {
   return {
     req_username: getOptionalEnv('ENV_REQUIRE_USERNAME', 'false') === 'true',
     req_photo: getOptionalEnv('ENV_REQUIRE_PHOTO', getOptionalEnv('ENV_REQUIRE_AVATAR', 'false')) === 'true',
+    screen_nickname: getOptionalEnv('ENV_SCREEN_NICKNAME', 'true') !== 'false',
     auto_block: getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false',
     violation_limit: Number(getOptionalEnv('ENV_KEYWORD_VIOLATION_LIMIT', '3')),
     delay_seconds: Math.max(0, Number(getOptionalEnv('ENV_FORWARD_DELAY_SECONDS', getOptionalEnv('ENV_FORWARD_DELAY', '0')))),
     notice_admin: getOptionalEnv('ENV_KEYWORD_NOTICE_TO_ADMIN', 'true') !== 'false',
     notice_user: getOptionalEnv('ENV_KEYWORD_NOTICE_TO_USER', 'true') !== 'false',
     enable_notify: getOptionalEnv('ENV_ENABLE_NOTIFICATION', 'true') !== 'false',
+    notify_alert_only: getOptionalEnv('ENV_NOTIFY_CHANNELS_ON_ALERT_ONLY', 'false') === 'true',
     flood_protect: getOptionalEnv('ENV_ENABLE_FLOOD_PROTECTION', 'true') !== 'false',
     flood_limit: Number(getOptionalEnv('ENV_FLOOD_LIMIT', '5')),
     flood_window_seconds: Number(getOptionalEnv('ENV_FLOOD_WINDOW_SECONDS', '10')),

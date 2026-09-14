@@ -151,8 +151,9 @@ export async function getKeywordRules() {
   return parsedRules;
 }
 
-export async function findBlockedKeyword(message) {
-  const rawContent = getMessageSearchableText(message);
+export async function findBlockedKeyword(message, config = null) {
+  const shouldScreenNickname = config ? config.screen_nickname !== false : true;
+  const rawContent = shouldScreenNickname ? getMessageSearchableText(message) : getMessageText(message);
   if (!rawContent) return null;
 
   const normalized = normalizeMessageText(rawContent);
