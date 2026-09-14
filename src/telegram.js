@@ -91,7 +91,29 @@ export function mdLine(label, value) {
 }
 
 export function getMessageText(message) {
-  return message.text || message.caption || '';
+  return message?.text || message?.caption || '';
+}
+
+export function getMessageSearchableText(message) {
+  if (!message) return '';
+  const parts = [];
+  const text = getMessageText(message);
+  if (text) parts.push(text);
+
+  const from = message.from;
+  if (from) {
+    if (from.first_name) parts.push(from.first_name);
+    if (from.last_name) parts.push(from.last_name);
+    if (from.username) parts.push(`@${from.username}`);
+  }
+
+  if (message.sender_chat?.title) {
+    parts.push(message.sender_chat.title);
+  } else if (message.chat?.type && message.chat.type !== 'private' && message.chat.title) {
+    parts.push(message.chat.title);
+  }
+
+  return parts.join(' ');
 }
 
 export function getCommand(message, botUsername = '') {

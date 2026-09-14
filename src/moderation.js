@@ -15,7 +15,7 @@ import {
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
-import { requestTelegram, getMessageText, sendMarkdown, mdLine, buildUserName, getSenderKey } from './telegram.js';
+import { requestTelegram, getMessageText, getMessageSearchableText, sendMarkdown, mdLine, buildUserName, getSenderKey } from './telegram.js';
 import { dispatchNotification } from './notifiers/index.js';
 
 export function normalizeMessageText(text = '') {
@@ -152,7 +152,7 @@ export async function getKeywordRules() {
 }
 
 export async function findBlockedKeyword(message) {
-  const rawContent = getMessageText(message);
+  const rawContent = getMessageSearchableText(message);
   if (!rawContent) return null;
 
   const normalized = normalizeMessageText(rawContent);
