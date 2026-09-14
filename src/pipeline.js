@@ -91,7 +91,21 @@ export async function getMappedGuestId(adminMessage) {
     if (kvVal) return kvVal;
   }
 
-  // 4. Check Telegram forward origin
+  // 4. Check Telegram Bot API 7.0+ forward_origin structure
+  const origin = adminMessage.forward_origin;
+  if (origin) {
+    if (origin.type === 'user' && origin.sender_user?.id) {
+      return String(origin.sender_user.id);
+    }
+    if (origin.type === 'chat' && origin.sender_chat?.id) {
+      return String(origin.sender_chat.id);
+    }
+    if (origin.type === 'channel' && origin.chat?.id) {
+      return String(origin.chat.id);
+    }
+  }
+
+  // 5. Check legacy Telegram forward origin (fallback)
   if (adminMessage.forward_from?.id) {
     return String(adminMessage.forward_from.id);
   }

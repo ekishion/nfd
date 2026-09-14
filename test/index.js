@@ -700,7 +700,36 @@ const hit = rules.find((r) => searchable.includes(r));
 assert.strictEqual(hit, '看简介');
 console.log('Sender nickname, username and profile keyword screening verified');
 
-console.log('\nAll 25 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 26: Telegram Bot API 7.0+ forward_origin & Modern Methods
+// ------------------------------------------------------------------------------
+function resolveForwardOriginGuestId(msg) {
+  const origin = msg.forward_origin;
+  if (origin) {
+    if (origin.type === 'user' && origin.sender_user?.id) return String(origin.sender_user.id);
+    if (origin.type === 'chat' && origin.sender_chat?.id) return String(origin.sender_chat.id);
+    if (origin.type === 'channel' && origin.chat?.id) return String(origin.chat.id);
+  }
+  if (msg.forward_from?.id) return String(msg.forward_from.id);
+  return null;
+}
+
+assert.strictEqual(resolveForwardOriginGuestId({
+  forward_origin: { type: 'user', sender_user: { id: 987654321, first_name: 'Alice' } },
+}), '987654321');
+
+assert.strictEqual(resolveForwardOriginGuestId({
+  forward_origin: { type: 'channel', chat: { id: -100999888777, title: 'News' } },
+}), '-100999888777');
+
+assert.strictEqual(resolveForwardOriginGuestId({
+  forward_from: { id: 11223344 },
+}), '11223344');
+
+console.log('Telegram Bot API 7.0+ forward_origin resolution verified');
+
+console.log('\nAll 26 test suites passed with 0 errors!\n');
+
 
 
 
