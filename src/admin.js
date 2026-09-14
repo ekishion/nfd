@@ -154,6 +154,18 @@ export async function handleGuestAdminCommand(message, command) {
   );
 }
 
+export async function extractGuestIdFromCallback(callbackQuery) {
+  const data = String(callbackQuery?.data || '');
+  const parts = data.split(':');
+  if (parts.length >= 2) {
+    const candidate = parts[parts.length - 1];
+    if (/^-?\d+$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return getMappedGuestId(callbackQuery?.message);
+}
+
 export async function onCallbackQuery(callbackQuery) {
   const fromId = String(callbackQuery.from?.id || '');
   const adminUid = getAdminUid();
@@ -176,8 +188,8 @@ export async function onCallbackQuery(callbackQuery) {
     return handleSettingCallback(callbackQuery);
   }
 
-  if (data === 'reply') {
-    const guestChatId = await getMappedGuestId(callbackQuery.message);
+  if (data === 'reply' || data.startsWith('reply:')) {
+    const guestChatId = await extractGuestIdFromCallback(callbackQuery);
     if (!guestChatId) {
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,
@@ -202,8 +214,8 @@ export async function onCallbackQuery(callbackQuery) {
     });
   }
 
-  if (data === 'info') {
-    const guestChatId = await getMappedGuestId(callbackQuery.message);
+  if (data === 'info' || data.startsWith('info:')) {
+    const guestChatId = await extractGuestIdFromCallback(callbackQuery);
     if (!guestChatId) {
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,
@@ -222,8 +234,12 @@ export async function onCallbackQuery(callbackQuery) {
     return answerCallbackQuery({ callback_query_id: callbackQuery.id });
   }
 
-  if (data === 'block' || data === 'unblock' || data === 'checkblock') {
-    const guestChatId = await getMappedGuestId(callbackQuery.message);
+  if (
+    data === 'block' || data.startsWith('block:') ||
+    data === 'unblock' || data.startsWith('unblock:') ||
+    data === 'checkblock' || data.startsWith('checkblock:')
+  ) {
+    const guestChatId = await extractGuestIdFromCallback(callbackQuery);
     if (!guestChatId) {
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,
@@ -231,7 +247,8 @@ export async function onCallbackQuery(callbackQuery) {
         show_alert: true,
       });
     }
-    if (data === 'block') {
+    const action = data.split(':')[0];
+    if (action === 'block') {
       await setUserBlocked(guestChatId, true);
       await answerCallbackQuery({
         callback_query_id: callbackQuery.id,
@@ -239,7 +256,7 @@ export async function onCallbackQuery(callbackQuery) {
       });
       return sendMarkdown(chatId, escapeMarkdown(`已将 UID:${guestChatId} 放入静音抽屉喵`), extra);
     }
-    if (data === 'unblock') {
+    if (action === 'unblock') {
       await setUserBlocked(guestChatId, false);
       await answerCallbackQuery({
         callback_query_id: callbackQuery.id,
@@ -247,7 +264,7 @@ export async function onCallbackQuery(callbackQuery) {
       });
       return sendMarkdown(chatId, escapeMarkdown(`已将 UID:${guestChatId} 从静音抽屉取出喵`));
     }
-    if (data === 'checkblock') {
+    if (action === 'checkblock') {
       const blocked = await isUserBlocked(guestChatId);
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,
@@ -257,8 +274,8 @@ export async function onCallbackQuery(callbackQuery) {
     }
   }
 
-  if (data === 'revoke:last') {
-    const guestChatId = await getMappedGuestId(callbackQuery.message);
+  if (data === 'revoke:last' || data.startsWith('revoke:last:')) {
+    const guestChatId = await extractGuestIdFromCallback(callbackQuery);
     if (!guestChatId) {
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,

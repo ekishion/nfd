@@ -184,18 +184,19 @@ export function formatGuestProfile(profile = {}, tag = '', blocked = false, viol
   ].join('\n');
 }
 
-export function adminMessageKeyboard() {
+export function adminMessageKeyboard(guestChatId = '') {
+  const suffix = guestChatId ? `:${guestChatId}` : '';
   return {
     inline_keyboard: [
       [
-        { text: '回复', callback_data: 'reply' },
-        { text: '信息', callback_data: 'info' },
-        { text: '撤回最近回复', callback_data: 'revoke:last' },
+        { text: '回复', callback_data: `reply${suffix}` },
+        { text: '信息', callback_data: `info${suffix}` },
+        { text: '撤回最近回复', callback_data: `revoke:last${suffix}` },
       ],
       [
-        { text: '屏蔽', callback_data: 'block' },
-        { text: '解除屏蔽', callback_data: 'unblock' },
-        { text: '检查', callback_data: 'checkblock' },
+        { text: '屏蔽', callback_data: `block${suffix}` },
+        { text: '解除屏蔽', callback_data: `unblock${suffix}` },
+        { text: '检查', callback_data: `checkblock${suffix}` },
       ],
     ],
   };

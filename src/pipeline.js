@@ -63,19 +63,42 @@ export async function rememberMessageMap(adminMessageId, guestChatId) {
 }
 
 export async function getMappedGuestId(adminMessage) {
+  if (!adminMessage) return null;
+
   // 1. Check if message is sent inside a Forum Topic
-  const threadId = adminMessage?.message_thread_id;
+  const threadId = adminMessage.message_thread_id;
   if (threadId) {
     const topicGuestId = await getGuestIdByTopic(threadId);
     if (topicGuestId) return topicGuestId;
   }
 
-  // 2. Check reply message ID mapping
-  const replyMessageId = adminMessage?.reply_to_message?.message_id;
-  if (!replyMessageId) return null;
-  const cached = getMemoryCache(`msg-map-${replyMessageId}`);
-  if (cached) return cached;
-  return kvGetJson(`msg-map-${replyMessageId}`, null);
+  // 2. Check reply message ID mapping (when admin replies to a forwarded message)
+  const replyMessageId = adminMessage.reply_to_message?.message_id;
+  if (replyMessageId) {
+    const cached = getMemoryCache(`msg-map-${replyMessageId}`);
+    if (cached) return cached;
+    const kvVal = await kvGetJson(`msg-map-${replyMessageId}`, null);
+    if (kvVal) return kvVal;
+  }
+
+  // 3. Check current message ID mapping (when button callback is clicked on the forwarded message itself)
+  const currentMessageId = adminMessage.message_id;
+  if (currentMessageId) {
+    const cached = getMemoryCache(`msg-map-${currentMessageId}`);
+    if (cached) return cached;
+    const kvVal = await kvGetJson(`msg-map-${currentMessageId}`, null);
+    if (kvVal) return kvVal;
+  }
+
+  // 4. Check Telegram forward origin
+  if (adminMessage.forward_from?.id) {
+    return String(adminMessage.forward_from.id);
+  }
+  if (adminMessage.forward_from_chat?.id) {
+    return String(adminMessage.forward_from_chat.id);
+  }
+
+  return null;
 }
 
 export async function handleGuestMessage(message) {
@@ -272,7 +295,7 @@ export async function processGuestMessageBatch(messages, config = null) {
     const isLast = i === messages.length - 1;
     const extra = {
       ...threadParam,
-      ...(isLast ? { reply_markup: adminMessageKeyboard() } : {}),
+      ...(isLast ? { reply_markup: adminMessageKeyboard(senderKey) } : {}),
     };
 
     const copyReq = await copyMessage({

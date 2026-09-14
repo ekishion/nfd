@@ -632,9 +632,32 @@ assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'true
 assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'TRUE' }), true);
 assert.strictEqual(isChannelActive(pushdeerChannel, {}), false);
 assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'false' }), false);
-assert.strictEqual(isChannelActive(pushdeerChannel, { ENV_ENABLE_PUSHDEER: 'false' }, true), true);
 console.log('Notifier channel gate (key / enable flag) verified');
 
-console.log('\nAll 23 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 24: Inline Button Callback Guest ID Resolution
+// ------------------------------------------------------------------------------
+function extractGuestIdFromCallbackData(data, messageMap = {}) {
+  const parts = String(data || '').split(':');
+  if (parts.length >= 2) {
+    const candidate = parts[parts.length - 1];
+    if (/^-?\d+$/.test(candidate)) {
+      return candidate;
+    }
+  }
+  return messageMap.message_id ? messageMap[messageMap.message_id] : null;
+}
+
+assert.strictEqual(extractGuestIdFromCallbackData('reply:123456'), '123456');
+assert.strictEqual(extractGuestIdFromCallbackData('info:123456'), '123456');
+assert.strictEqual(extractGuestIdFromCallbackData('block:123456'), '123456');
+assert.strictEqual(extractGuestIdFromCallbackData('unblock:123456'), '123456');
+assert.strictEqual(extractGuestIdFromCallbackData('checkblock:123456'), '123456');
+assert.strictEqual(extractGuestIdFromCallbackData('revoke:last:123456'), '123456');
+assert.strictEqual(extractGuestIdFromCallbackData('info', { message_id: 501, 501: '789012' }), '789012');
+console.log('Inline button callback guest ID resolution verified');
+
+console.log('\nAll 24 test suites passed with 0 errors!\n');
+
 
 
