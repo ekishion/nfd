@@ -32,7 +32,11 @@ const FEATURE_MODULES = [
     file: 'commands.js',
     mode: 'optIn',
     envs: ['ENV_BOT_COMMANDS'],
-    stub: 'export async function registerBotCommands() {}',
+    stub: `
+export async function registerBotCommands() {
+  await fetch(apiUrl('deleteMyCommands'), { method: 'POST' }).catch(() => {});
+}
+`,
   },
   {
     name: '论坛话题自动创建',

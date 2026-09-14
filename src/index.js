@@ -22,6 +22,14 @@ import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './
 import { registerBotCommands } from './commands.js';
 
 let secretWarningLogged = false;
+let botCommandsSynced = false;
+
+export async function ensureBotCommandsSynced() {
+  if (botCommandsSynced) return;
+  botCommandsSynced = true;
+  await registerBotCommands().catch(() => {});
+}
+
 function warnMissingSecret() {
   if (secretWarningLogged) return;
   secretWarningLogged = true;
@@ -91,6 +99,7 @@ export async function handleWebhook(request, ctx = null) {
 
 export async function onUpdate(update) {
   try {
+    ensureBotCommandsSynced().catch(() => {});
     if (update.update_id && isDuplicateUpdate(update.update_id)) {
       return;
     }

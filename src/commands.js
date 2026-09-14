@@ -8,13 +8,19 @@ import { apiUrl } from './telegram.js';
 
 export async function registerBotCommands() {
   const commands = getBotCommands();
-  if (!commands || !commands.length) return;
-
-  await fetch(apiUrl('setMyCommands'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ commands }),
-  }).catch((err) => {
-    console.log(JSON.stringify({ error: 'set-my-commands-failed', message: err.message }));
-  });
+  if (commands && commands.length > 0) {
+    await fetch(apiUrl('setMyCommands'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ commands }),
+    }).catch((err) => {
+      console.log(JSON.stringify({ error: 'set-my-commands-failed', message: err.message }));
+    });
+  } else {
+    await fetch(apiUrl('deleteMyCommands'), {
+      method: 'POST',
+    }).catch((err) => {
+      console.log(JSON.stringify({ error: 'delete-my-commands-failed', message: err.message }));
+    });
+  }
 }
