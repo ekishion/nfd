@@ -64,8 +64,8 @@ export function buildSettingPanel(config, page = 'moderation') {
       `• *频控条数阈值:* \`${config.flood_limit || 5} 条 / ${config.flood_window_seconds || 10}秒\``,
       `• *频控静音时长:* \`${config.flood_mute_seconds || 60} 秒\``,
       `• *拦截危险安装包/可执行文件:* ${config.block_executables ? '✅ 已开启' : '❌ 已关闭'}`,
-      `• *离开模式 (自动应答):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
-      `• *离开提示文案:* \`${(config.away_message || '外出中').slice(0, 25)}\``,
+      `• *离开模式 \\(自动应答\\):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开提示文案:* \`${(config.away_message || '外出中').replace(/[`\\]/g, '').slice(0, 25)}\``,
       '',
       '_点击下方按钮可快速调节频控参数或切换离开模式：_',
     );
@@ -262,7 +262,15 @@ export async function handleSettingCallback(callbackQuery) {
     toast = '已刷新当前配置';
   } else if (action === 'toggle') {
     const config = await getRuntimeConfig();
-    const nextVal = !config[key];
+    let currentVal = config[key];
+    if (currentVal === undefined) {
+      if (['screen_nickname', 'auto_block', 'notice_admin', 'notice_user', 'enable_notify', 'flood_protect', 'block_executables'].includes(key)) {
+        currentVal = true;
+      } else {
+        currentVal = false;
+      }
+    }
+    const nextVal = !currentVal;
     await updateRuntimeConfig({ [key]: nextVal });
     if (['delay_seconds', 'notice_admin', 'notice_user', 'enable_notify', 'notify_alert_only'].includes(key)) {
       currentPage = 'forwarding';

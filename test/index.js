@@ -878,7 +878,100 @@ assert.strictEqual(pollSearchable.includes('换汇'), true);
 assert.strictEqual(pollSearchable.includes('代充'), true);
 console.log('Modern message text extraction (polls & stories) verified');
 
-console.log('\nAll 31 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 32: Settings Panel 3-Page MarkdownV2 Syntax & Entity Escaping
+// ------------------------------------------------------------------------------
+function validateMarkdownV2(text) {
+  // Strip code blocks (`...` and ```...```)
+  const noCode = text.replace(/```[\s\S]*?```/g, '').replace(/`[^`]*`/g, '');
+  // Strip escaped characters (\x)
+  const noEscaped = noCode.replace(/\\./g, '');
+  // Look for unescaped reserved MarkdownV2 characters: ( ) [ ] ~ > # + - = | { } . !
+  // (Note: * and _ are allowed for bold/italic if balanced)
+  const forbidden = /[()\[\]~>#+\-=|{}.!]/;
+  const match = noEscaped.match(forbidden);
+  if (match) {
+    throw new Error(`Unescaped MarkdownV2 character found: "${match[0]}" in text snippet: ${noEscaped.slice(Math.max(0, match.index - 20), match.index + 20)}`);
+  }
+  return true;
+}
+
+function buildMockSettingPanel(config, page) {
+  const isModeration = page === 'moderation';
+  const isForwarding = page === 'forwarding';
+  const isDefense = page === 'defense';
+
+  const title = isModeration
+    ? '⚙️ *控制面板 \\- 拦截审查设置* \\(1/3\\)'
+    : isForwarding
+      ? '⚙️ *控制面板 \\- 转发与通知设置* \\(2/3\\)'
+      : '⚙️ *控制面板 \\- 防护与离开设置* \\(3/3\\)';
+
+  const lines = [title, ''];
+
+  if (isModeration) {
+    lines.push(
+      `• *要求设置用户名:* ${config.req_username ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *要求设置个人头像:* ${config.req_photo ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *昵称与用户名审查:* ${config.screen_nickname !== false ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词多次自动拉黑:* ${config.auto_block ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词拉黑阈值:* \`${config.violation_limit} 次\``,
+      '',
+      '_点击下方按钮切换状态、调整阈值或同步规则库：_',
+    );
+  } else if (isForwarding) {
+    const delayText = config.delay_seconds > 0 ? `${config.delay_seconds} 秒` : '关闭 (即时转发)';
+    lines.push(
+      `• *转发聚合延迟:* \`${delayText}\``,
+      `• *敏感词通报管理:* ${config.notice_admin ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *敏感词提示客人:* ${config.notice_user ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *定期交易安全提醒:* ${config.enable_notify ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *外部推送仅告警:* ${config.notify_alert_only ? '✅ 仅告警' : '❌ 全部外发'}`,
+      '',
+      '_点击下方按钮可直接切换状态或调节延迟：_',
+    );
+  } else {
+    lines.push(
+      `• *短时防刷频控:* ${config.flood_protect ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *频控条数阈值:* \`${config.flood_limit || 5} 条 / ${config.flood_window_seconds || 10}秒\``,
+      `• *频控静音时长:* \`${config.flood_mute_seconds || 60} 秒\``,
+      `• *拦截危险安装包/可执行文件:* ${config.block_executables ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开模式 \\(自动应答\\):* ${config.away_mode ? '✅ 已开启' : '❌ 已关闭'}`,
+      `• *离开提示文案:* \`${(config.away_message || '外出中').replace(/[`\\]/g, '').slice(0, 25)}\``,
+      '',
+      '_点击下方按钮可快速调节频控参数或切换离开模式：_',
+    );
+  }
+  return lines.join('\n');
+}
+
+const mockConfig = {
+  req_username: false,
+  req_photo: false,
+  screen_nickname: true,
+  auto_block: true,
+  violation_limit: 3,
+  delay_seconds: 3,
+  notice_admin: false,
+  notice_user: false,
+  enable_notify: false,
+  notify_alert_only: false,
+  flood_protect: true,
+  flood_limit: 5,
+  flood_window_seconds: 10,
+  flood_mute_seconds: 60,
+  block_executables: true,
+  away_mode: false,
+  away_message: '外出中',
+};
+
+assert.strictEqual(validateMarkdownV2(buildMockSettingPanel(mockConfig, 'moderation')), true);
+assert.strictEqual(validateMarkdownV2(buildMockSettingPanel(mockConfig, 'forwarding')), true);
+assert.strictEqual(validateMarkdownV2(buildMockSettingPanel(mockConfig, 'defense')), true);
+console.log('Settings panel 3-page MarkdownV2 entity escaping validated');
+
+console.log('\nAll 32 test suites passed with 0 errors!\n');
+
 
 
 
