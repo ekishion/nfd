@@ -8,6 +8,7 @@ import {
   MAX_INLINE_DELAY_SECONDS,
   DEFAULT_NOTIFICATION,
   getAdminUid,
+  getForwardChatId,
   getUserAckCooldownMs,
   getCommandWarningCooldownMs,
   asArray,
@@ -229,7 +230,7 @@ export async function processGuestMessageBatch(messages, config = null) {
   const firstMessage = messages[0];
   const senderKey = getSenderKey(firstMessage);
   const sourceChatId = String(firstMessage.chat.id);
-  const forwardChatId = config.forward_chat_id || getAdminUid();
+  const forwardChatId = config.forward_chat_id || getForwardChatId();
 
   const isBlocked = await isUserBlocked(senderKey);
   if (isBlocked) {

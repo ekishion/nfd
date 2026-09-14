@@ -32,9 +32,9 @@
 | `CF_ACCOUNT_ID` | Cloudflare 账户 ID |
 | `KV_NAMESPACE_ID` | `nfd` KV 命名空间的 32 位 ID |
 
-> 工作流只从 Secrets 读取这三项：把它们配置成 Variables 不会生效；反过来，业务变量放进 Secrets 也不会被读取（防止敏感信息以明文注入 Cloudflare）。
+> 工作流核心部署凭据（`CF_API_TOKEN`、`CF_ACCOUNT_ID`、`KV_NAMESPACE_ID`）必须放入 Secrets。
 
-#### C. GitHub Variables（非敏感业务配置）
+#### C. GitHub Variables（非敏感业务配置，推荐）
 进入 **Settings -> Secrets and variables -> Actions -> Variables**：
 
 | 名称 | 说明 | 示例 |
@@ -50,9 +50,9 @@
 
 > 上表只列部署时常用的变量。全部环境变量已按「基础配置 / 转发与告警 / 监听模式 / 审查与防护 / 关键词拦截 / 提示与回执 / 命令菜单 / 外部推送 / 文案与数据源」九类整理，完整说明见[配置手册 · 环境变量](configuration.md#环境变量)。
 >
-> 工作流只从 Variables 读取业务变量：把它们配成 Secrets 会被忽略——敏感凭据请配置到 Cloudflare 密钥（第 3 步）。
+> 推荐将业务变量配置在 Variables 中。工作流已内置容错机制，若将业务变量误配入 Secrets，也会自动作为备选读取。
 >
-> 敏感凭据（`ENV_BOT_TOKEN` / `ENV_BOT_SECRET` / `ENV_ADMIN_UID`）不配置在 GitHub，见下方第 3 步。
+> 敏感凭据（`ENV_BOT_TOKEN` / `ENV_BOT_SECRET` / `ENV_ADMIN_UID`）绝不配置在 GitHub，见下方第 3 步。
 
 ### 2. 触发首次部署
 

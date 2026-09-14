@@ -26,7 +26,8 @@ export function getAdminUid() {
 }
 
 export function getForwardChatId() {
-  return String(getOptionalEnv('ENV_FORWARD_CHAT_ID', getAdminUid()));
+  const custom = getOptionalEnv('ENV_FORWARD_CHAT_ID');
+  return custom ? String(custom) : getAdminUid();
 }
 
 export function getForwardThreadId() {
@@ -35,7 +36,8 @@ export function getForwardThreadId() {
 }
 
 export function getAlertChatId() {
-  return String(getOptionalEnv('ENV_ALERT_CHAT_ID', getForwardChatId()));
+  const custom = getOptionalEnv('ENV_ALERT_CHAT_ID');
+  return custom ? String(custom) : getForwardChatId();
 }
 
 export function getAlertThreadId() {
@@ -217,7 +219,11 @@ export function getDefaultEnvConfig() {
 }
 
 export function getOptionalEnv(name, fallback = '') {
-  return Object.prototype.hasOwnProperty.call(globalThis, name) ? String(globalThis[name] ?? '') : fallback;
+  if (Object.prototype.hasOwnProperty.call(globalThis, name)) {
+    const val = String(globalThis[name] ?? '').trim();
+    if (val !== '') return val;
+  }
+  return fallback;
 }
 
 export function asArray(value) {

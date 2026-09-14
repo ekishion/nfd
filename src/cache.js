@@ -2,7 +2,18 @@
 // src/cache.js - Memory TTL Cache, KV Wrapper & Remote DB Management
 // ==============================================================================
 
-import { FRAUD_CACHE_TTL, getKeywordDbUrl, getDefaultEnvConfig, getToken, asArray } from './config.js';
+import {
+  FRAUD_CACHE_TTL,
+  getKeywordDbUrl,
+  getDefaultEnvConfig,
+  getForwardChatId,
+  getForwardThreadId,
+  getAlertChatId,
+  getAlertThreadId,
+  getEnableForumTopics,
+  getToken,
+  asArray,
+} from './config.js';
 import { sendPlainText } from './telegram.js';
 
 export const memoryCache = new Map();
@@ -142,20 +153,34 @@ export async function getRuntimeConfig() {
   if (cached) return cached;
 
   const kvCfg = await kvGetJson('runtime-settings', {});
+  const envDefaults = getDefaultEnvConfig();
   const merged = {
-    ...getDefaultEnvConfig(),
+    ...envDefaults,
     ...(kvCfg && typeof kvCfg === 'object' ? kvCfg : {}),
+    // 路由目标与话题模式始终以最新环境变量为准，防止历史 KV 记录锁定旧的私聊 UID
+    forward_chat_id: getForwardChatId(),
+    forward_thread_id: getForwardThreadId(),
+    alert_chat_id: getAlertChatId(),
+    alert_thread_id: getAlertThreadId(),
+    enable_forum_topics: getEnableForumTopics(),
   };
   setMemoryCache('runtime-config', merged, 60000);
   return merged;
 }
 
 export async function updateRuntimeConfig(patch) {
-  const current = await getRuntimeConfig();
-  const next = { ...current, ...patch };
-  setMemoryCache('runtime-config', next, 60000);
-  await kvPutJson('runtime-settings', next);
-  return next;
+  const currentKv = await kvGetJson('runtime-settings', {});
+  const nextKv = { ...(currentKv && typeof currentKv === 'object' ? currentKv : {}), ...patch };
+  // 剥离静态路由字段，防止持久化到 KV 中
+  delete nextKv.forward_chat_id;
+  delete nextKv.forward_thread_id;
+  delete nextKv.alert_chat_id;
+  delete nextKv.alert_thread_id;
+  delete nextKv.enable_forum_topics;
+
+  await kvPutJson('runtime-settings', nextKv);
+  invalidateMemoryCache('runtime-config');
+  return getRuntimeConfig();
 }
 
 export async function incrementStat(name) {
