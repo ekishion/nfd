@@ -109,6 +109,8 @@ export async function onUpdate(update) {
       await onMessage(update.message);
     } else if (update.business_message) {
       await onMessage(update.business_message);
+    } else if (update.edited_business_message) {
+      await onMessage(update.edited_business_message);
     } else if (update.edited_message) {
       await onMessage(update.edited_message);
     } else if (update.channel_post) {
@@ -237,7 +239,18 @@ export async function registerWebhook(requestUrl) {
     body: JSON.stringify({
       url: webhookUrl,
       secret_token: secret,
-      allowed_updates: ['message', 'edited_message', 'channel_post', 'callback_query', 'my_chat_member', 'business_message'],
+      allowed_updates: [
+        'message',
+        'edited_message',
+        'channel_post',
+        'callback_query',
+        'my_chat_member',
+        'business_message',
+        'edited_business_message',
+        'deleted_business_messages',
+        'business_connection',
+        'message_reaction',
+      ],
       drop_pending_updates: true,
     }),
   }).then((response) => response.json());

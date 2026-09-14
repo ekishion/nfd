@@ -704,7 +704,7 @@ console.log('Sender nickname, username and profile keyword screening verified');
 // Test 26: Telegram Bot API 7.0+ forward_origin & Modern Methods
 // ------------------------------------------------------------------------------
 function resolveForwardOriginGuestId(msg) {
-  const origin = msg.forward_origin;
+  const origin = msg.forward_origin || msg.external_reply?.origin;
   if (origin) {
     if (origin.type === 'user' && origin.sender_user?.id) return String(origin.sender_user.id);
     if (origin.type === 'chat' && origin.sender_chat?.id) return String(origin.sender_chat.id);
@@ -723,12 +723,163 @@ assert.strictEqual(resolveForwardOriginGuestId({
 }), '-100999888777');
 
 assert.strictEqual(resolveForwardOriginGuestId({
+  external_reply: { origin: { type: 'user', sender_user: { id: 123456789 } } },
+}), '123456789');
+
+assert.strictEqual(resolveForwardOriginGuestId({
   forward_from: { id: 11223344 },
 }), '11223344');
 
-console.log('Telegram Bot API 7.0+ forward_origin resolution verified');
+console.log('Telegram Bot API 7.0+ forward_origin & external_reply resolution verified');
 
-console.log('\nAll 26 test suites passed with 0 errors!\n');
+// ------------------------------------------------------------------------------
+// Test 27: Bot API 7.11+ CopyTextButton Markup
+// ------------------------------------------------------------------------------
+function copyTextButton(text, copyText) {
+  return {
+    text,
+    copy_text: { text: String(copyText) },
+  };
+}
+
+function adminMessageKeyboard(guestChatId = '') {
+  const suffix = guestChatId ? `:${guestChatId}` : '';
+  const rows = [
+    [
+      { text: '回复', callback_data: `reply${suffix}` },
+      { text: '信息', callback_data: `info${suffix}` },
+      { text: '撤回最近回复', callback_data: `revoke:last${suffix}` },
+    ],
+    [
+      { text: '屏蔽', callback_data: `block${suffix}` },
+      { text: '解除屏蔽', callback_data: `unblock${suffix}` },
+      { text: '检查', callback_data: `checkblock${suffix}` },
+    ],
+  ];
+  if (guestChatId) {
+    rows.push([
+      copyTextButton('📋 复制客人 UID', guestChatId),
+    ]);
+  }
+  return { inline_keyboard: rows };
+}
+
+const kbWithGuest = adminMessageKeyboard('5544332211');
+assert.strictEqual(kbWithGuest.inline_keyboard.length, 3);
+assert.deepStrictEqual(kbWithGuest.inline_keyboard[2][0], {
+  text: '📋 复制客人 UID',
+  copy_text: { text: '5544332211' },
+});
+
+const kbWithoutGuest = adminMessageKeyboard('');
+assert.strictEqual(kbWithoutGuest.inline_keyboard.length, 2);
+console.log('Bot API 7.11+ CopyTextButton keyboard markup verified');
+
+// ------------------------------------------------------------------------------
+// Test 28: Bot API 7.1+ MarkdownV2 Blockquote & Expandable Blockquote
+// ------------------------------------------------------------------------------
+function blockquote(text = '') {
+  return String(text)
+    .split('\n')
+    .map((line) => `>${line}`)
+    .join('\n');
+}
+
+function expandableBlockquote(text = '') {
+  const quoted = String(text)
+    .split('\n')
+    .map((line) => `>${line}`)
+    .join('\n');
+  return `**${quoted}**`;
+}
+
+assert.strictEqual(blockquote('line1\nline2'), '>line1\n>line2');
+assert.strictEqual(expandableBlockquote('line1\nline2'), '**>line1\n>line2**');
+console.log('Bot API 7.1+ MarkdownV2 blockquote & expandable blockquote verified');
+
+// ------------------------------------------------------------------------------
+// Test 29: Bot API 7.0 - 10.0+ Reaction Payload Normalization
+// ------------------------------------------------------------------------------
+function normalizeReaction(reaction) {
+  if (typeof reaction === 'string' && reaction) {
+    return [{ type: 'emoji', emoji: reaction }];
+  }
+  if (Array.isArray(reaction)) {
+    return reaction.map((r) => (typeof r === 'string' ? { type: 'emoji', emoji: r } : r));
+  }
+  if (reaction && typeof reaction === 'object') {
+    return [reaction];
+  }
+  return [];
+}
+
+assert.deepStrictEqual(normalizeReaction('🔥'), [{ type: 'emoji', emoji: '🔥' }]);
+assert.deepStrictEqual(normalizeReaction(['👍', '❤️']), [
+  { type: 'emoji', emoji: '👍' },
+  { type: 'emoji', emoji: '❤️' },
+]);
+assert.deepStrictEqual(normalizeReaction({ type: 'custom_emoji', custom_emoji_id: '12345' }), [
+  { type: 'custom_emoji', custom_emoji_id: '12345' },
+]);
+assert.deepStrictEqual(normalizeReaction({ type: 'paid' }), [{ type: 'paid' }]);
+assert.deepStrictEqual(normalizeReaction([]), []);
+assert.deepStrictEqual(normalizeReaction(null), []);
+console.log('Bot API reaction payload normalization verified');
+
+// ------------------------------------------------------------------------------
+// Test 30: Bot API 8.0+ Scheduled Video Message ID Guard
+// ------------------------------------------------------------------------------
+function shouldRememberMessage(messageId) {
+  return typeof messageId === 'number' && messageId > 0;
+}
+
+assert.strictEqual(shouldRememberMessage(12345), true);
+assert.strictEqual(shouldRememberMessage(0), false); // Scheduled video message waiting for reencode
+assert.strictEqual(shouldRememberMessage(null), false);
+assert.strictEqual(shouldRememberMessage(undefined), false);
+console.log('Bot API 8.0+ scheduled video message ID guard verified');
+
+// ------------------------------------------------------------------------------
+// Test 31: Modern Message Text Extraction (Polls, Stories, Paid Media)
+// ------------------------------------------------------------------------------
+function extractModernMessageSearchableText(message) {
+  if (!message) return '';
+  const parts = [];
+  const text = message?.text || message?.caption || message?.poll?.question || message?.story?.caption || '';
+  if (text) parts.push(text);
+
+  if (Array.isArray(message?.poll?.options)) {
+    for (const opt of message.poll.options) {
+      if (opt.text) parts.push(opt.text);
+    }
+  }
+
+  const from = message.from;
+  if (from) {
+    if (from.first_name) parts.push(from.first_name);
+    if (from.last_name) parts.push(from.last_name);
+    if (from.username) parts.push(`@${from.username}`);
+  }
+
+  return parts.join(' ');
+}
+
+const pollMessage = {
+  message_id: 101,
+  poll: {
+    question: '请问在哪里换汇最划算？',
+    options: [{ text: '找我代充' }, { text: '正规渠道' }],
+  },
+  from: { id: 111, first_name: 'Bob' },
+};
+
+const pollSearchable = extractModernMessageSearchableText(pollMessage);
+assert.strictEqual(pollSearchable.includes('换汇'), true);
+assert.strictEqual(pollSearchable.includes('代充'), true);
+console.log('Modern message text extraction (polls & stories) verified');
+
+console.log('\nAll 31 test suites passed with 0 errors!\n');
+
 
 
 

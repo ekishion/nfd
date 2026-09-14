@@ -25,6 +25,11 @@ No Fraud / Node Forward Bot
 - 监听模式（`ENV_LISTEN_CHAT_IDS`）：将指定群聊/频道设为留言来源，成员发言会按发送者身份转达给管理人，未列入白名单的群组仍自动退出。
 - 按需打包：构建时按环境变量裁剪可选功能（外部推送、命令菜单、论坛话题、远程文案、诈骗库检测等），未配置的模块不进入最终产物，构建日志列出每个模块的打包结果。
 - 外部推送：客人留言与安全告警可实时推送到手机或微信（PushDeer / Server酱）。
+- 现代 Telegram Bot API 深度适配：
+  - 支持 Bot API 7.0+ `forward_origin` 与 `external_reply` 身份溯源
+  - 支持 Bot API 7.11+ `copy_text` 按钮，转达与画像卡片支持一键复制纯数字 UID
+  - 支持 Bot API 7.0+ `reply_parameters` 原生引用回复与 `link_preview_options` 链接预览控制
+  - 适配大群/频道视频服务端调度（`message_id = 0`）容错与商业消息编辑（`edited_business_message`）
 - 双向消息转达：管理员直接回复转发消息即可回传给原用户，并支持一键撤回。
 
 ## 项目结构

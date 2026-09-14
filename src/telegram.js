@@ -71,14 +71,30 @@ export function deleteMessages(chatId, messageIds = []) {
 }
 
 export function setMessageReaction(chatId, messageId, reaction = '👍', isBig = false) {
-  const reactionObj = typeof reaction === 'string'
-    ? [{ type: 'emoji', emoji: reaction }]
-    : Array.isArray(reaction) ? reaction : [];
+  let reactionObj = [];
+  if (typeof reaction === 'string' && reaction) {
+    reactionObj = [{ type: 'emoji', emoji: reaction }];
+  } else if (Array.isArray(reaction)) {
+    reactionObj = reaction.map((r) => (typeof r === 'string' ? { type: 'emoji', emoji: r } : r));
+  } else if (reaction && typeof reaction === 'object') {
+    reactionObj = [reaction];
+  }
   return requestTelegram('setMessageReaction', {
     chat_id: chatId,
     message_id: messageId,
     reaction: reactionObj,
     is_big: isBig,
+  });
+}
+
+export function deleteMessageReaction(chatId, messageId) {
+  return setMessageReaction(chatId, messageId, []);
+}
+
+export function deleteAllMessageReactions(chatId, messageId) {
+  return requestTelegram('deleteAllMessageReactions', {
+    chat_id: chatId,
+    message_id: messageId,
   });
 }
 
@@ -96,6 +112,28 @@ export function leaveChat(chatId) {
 
 export function escapeMarkdown(value = '') {
   return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
+}
+
+export function blockquote(text = '') {
+  return String(text)
+    .split('\n')
+    .map((line) => `>${line}`)
+    .join('\n');
+}
+
+export function expandableBlockquote(text = '') {
+  const quoted = String(text)
+    .split('\n')
+    .map((line) => `>${line}`)
+    .join('\n');
+  return `**${quoted}**`;
+}
+
+export function copyTextButton(text, copyText) {
+  return {
+    text,
+    copy_text: { text: String(copyText) },
+  };
 }
 
 export function sendMarkdown(chatId, text, extra = {}) {
@@ -121,7 +159,7 @@ export function mdLine(label, value) {
 }
 
 export function getMessageText(message) {
-  return message?.text || message?.caption || '';
+  return message?.text || message?.caption || message?.poll?.question || message?.story?.caption || '';
 }
 
 export function getMessageSearchableText(message) {
@@ -129,6 +167,12 @@ export function getMessageSearchableText(message) {
   const parts = [];
   const text = getMessageText(message);
   if (text) parts.push(text);
+
+  if (Array.isArray(message?.poll?.options)) {
+    for (const opt of message.poll.options) {
+      if (opt.text) parts.push(opt.text);
+    }
+  }
 
   const from = message.from;
   if (from) {
@@ -238,17 +282,38 @@ export function formatGuestProfile(profile = {}, tag = '', blocked = false, viol
 
 export function adminMessageKeyboard(guestChatId = '') {
   const suffix = guestChatId ? `:${guestChatId}` : '';
+  const rows = [
+    [
+      { text: '回复', callback_data: `reply${suffix}` },
+      { text: '信息', callback_data: `info${suffix}` },
+      { text: '撤回最近回复', callback_data: `revoke:last${suffix}` },
+    ],
+    [
+      { text: '屏蔽', callback_data: `block${suffix}` },
+      { text: '解除屏蔽', callback_data: `unblock${suffix}` },
+      { text: '检查', callback_data: `checkblock${suffix}` },
+    ],
+  ];
+  if (guestChatId) {
+    rows.push([
+      copyTextButton('📋 复制客人 UID', guestChatId),
+    ]);
+  }
+  return { inline_keyboard: rows };
+}
+
+export function guestProfileKeyboard(guestChatId = '') {
+  if (!guestChatId) return null;
+  const suffix = `:${guestChatId}`;
   return {
     inline_keyboard: [
       [
         { text: '回复', callback_data: `reply${suffix}` },
-        { text: '信息', callback_data: `info${suffix}` },
-        { text: '撤回最近回复', callback_data: `revoke:last${suffix}` },
-      ],
-      [
         { text: '屏蔽', callback_data: `block${suffix}` },
         { text: '解除屏蔽', callback_data: `unblock${suffix}` },
-        { text: '检查', callback_data: `checkblock${suffix}` },
+      ],
+      [
+        copyTextButton('📋 复制客人 UID', guestChatId),
       ],
     ],
   };
@@ -261,3 +326,4 @@ export function revokeReplyKeyboard(guestChatId, messageId) {
     ]],
   };
 }
+

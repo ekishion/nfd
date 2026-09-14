@@ -157,8 +157,8 @@ flowchart LR
     B -- "是" --> C["全部功能打包"]
     B -- "否" --> D{"开关模式"}
     D -- "按需开启 optIn" --> E{"环境变量已配置?"}
-    E -- "是" --> F["✔ 打包真实实现"]
-    E -- "否" --> G["✘ 注入空 stub"]
+    E -- "是" --> F["打包真实实现"]
+    E -- "否" --> G["注入空 stub"]
     D -- "默认开启 optOut" --> H{"显式设为<br>false / 0 / off / no ?"}
     H -- "否" --> F
     H -- "是" --> G
@@ -171,11 +171,11 @@ flowchart LR
 
 ```text
 Bundling src/*.js into worker.js...
-  ✘ 外部推送通道 -> stub
-  ✘ Bot 命令菜单 (commands.js) -> stub
-  ✔ 论坛话题自动创建 (forum.js)
-  ✔ 远程自定义文案 (remote-text.js)
-  ✔ 诈骗库检测 (fraud.js)
+  [-] 外部推送通道 -> stub
+  [-] Bot 命令菜单 (commands.js) -> stub
+  [+] 论坛话题自动创建 (forum.js)
+  [+] 远程自定义文案 (remote-text.js)
+  [+] 诈骗库检测 (fraud.js)
 Successfully generated worker.js (82450 bytes)
 ```
 

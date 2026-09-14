@@ -92,7 +92,7 @@ export async function getMappedGuestId(adminMessage) {
   }
 
   // 4. Check Telegram Bot API 7.0+ forward_origin structure
-  const origin = adminMessage.forward_origin;
+  const origin = adminMessage.forward_origin || adminMessage.external_reply?.origin;
   if (origin) {
     if (origin.type === 'user' && origin.sender_user?.id) {
       return String(origin.sender_user.id);
@@ -322,7 +322,9 @@ export async function processGuestMessageBatch(messages, config = null) {
 
     if (copyReq.ok) {
       deliveredAny = true;
-      await rememberMessageMap(copyReq.result.message_id, senderKey);
+      if (copyReq.result?.message_id && copyReq.result.message_id > 0) {
+        await rememberMessageMap(copyReq.result.message_id, senderKey);
+      }
       continue;
     }
 
@@ -335,7 +337,9 @@ export async function processGuestMessageBatch(messages, config = null) {
 
     if (forwardReq.ok) {
       deliveredAny = true;
-      await rememberMessageMap(forwardReq.result.message_id, senderKey);
+      if (forwardReq.result?.message_id && forwardReq.result.message_id > 0) {
+        await rememberMessageMap(forwardReq.result.message_id, senderKey);
+      }
       continue;
     }
 

@@ -34,6 +34,7 @@ import {
   getCommandArgs,
   buildUserName,
   formatGuestProfile,
+  guestProfileKeyboard,
   revokeReplyKeyboard,
 } from './telegram.js';
 import { isUserBlocked, setUserBlocked, getKeywordRules } from './moderation.js';
@@ -67,7 +68,10 @@ function getReplyContext(message) {
   const chatId = message?.chat?.id;
   const threadId = message?.message_thread_id;
   const extra = {
-    reply_parameters: { message_id: message?.message_id },
+    reply_parameters: {
+      message_id: message?.message_id,
+      allow_sending_without_reply: true,
+    },
     ...(threadId ? { message_thread_id: threadId } : {}),
   };
   return { chatId, threadId, extra };
@@ -230,7 +234,11 @@ export async function onCallbackQuery(callbackQuery) {
       kvGetJson(`keyword-violation-${guestChatId}`, null),
     ]);
     const lines = formatGuestProfile(profile || { userId: guestChatId }, tag, blocked, violation?.count);
-    await sendMarkdown(chatId, lines, extra);
+    const profileKeyboard = guestProfileKeyboard(guestChatId);
+    await sendMarkdown(chatId, lines, {
+      ...extra,
+      ...(profileKeyboard ? { reply_markup: profileKeyboard } : {}),
+    });
     return answerCallbackQuery({ callback_query_id: callbackQuery.id });
   }
 
@@ -489,7 +497,11 @@ export async function handleUserProfile(message) {
   ]);
 
   const lines = formatGuestProfile(profile || { userId: targetId }, tag, blocked, violation?.count);
-  return sendMarkdown(chatId, lines, extra);
+  const profileKeyboard = guestProfileKeyboard(targetId);
+  return sendMarkdown(chatId, lines, {
+    ...extra,
+    ...(profileKeyboard ? { reply_markup: profileKeyboard } : {}),
+  });
 }
 
 export async function handleTagGuest(message) {
