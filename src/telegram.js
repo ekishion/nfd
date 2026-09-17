@@ -32,12 +32,21 @@ export function sendMessage(msg = {}) {
   return requestTelegram('sendMessage', msg);
 }
 
-export function editMessageText(msg = {}) {
-  return requestTelegram('editMessageText', {
+export async function editMessageText(msg = {}) {
+  const data = await requestTelegram('editMessageText', {
     parse_mode: PARSE_MODE,
     link_preview_options: { is_disabled: true },
     ...msg,
   });
+  // 面板刷新/重复点击时新内容与当前完全一致，Telegram 拒绝无变化编辑——消息已在目标状态，按成功处理
+  if (!data.ok && isMessageNotModified(data.description)) {
+    return { ok: true, result: true };
+  }
+  return data;
+}
+
+export function isMessageNotModified(description) {
+  return /message is not modified/i.test(String(description || ''));
 }
 
 export function copyMessage(msg = {}) {
