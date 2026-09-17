@@ -36,11 +36,15 @@ No Fraud / Node Forward Bot
 
 ```text
 nfd/
-├── src/                  
+├── src/
 │   ├── notifiers/        # 外部通知子模块目录
 │   ├── config.js         # 环境变量、常量与数据文案引入
 │   ├── cache.js          # 内存缓存、KV 存储与远程数据库拉取
 │   ├── telegram.js       # Telegram API 封装与消息格式化
+│   ├── commands.js       # Bot 命令菜单注册（可选功能模块）
+│   ├── forum.js          # 论坛话题自动创建（可选功能模块）
+│   ├── remote-text.js    # 远程自定义文案（可选功能模块）
+│   ├── fraud.js          # 诈骗库检测（可选功能模块）
 │   ├── moderation.js     # 黑名单、用户名、头像与关键词审查
 │   ├── pipeline.js       # 消息延迟缓冲与批量转发逻辑
 │   ├── panel.js          # 控制面板渲染与回调处理
@@ -57,8 +61,6 @@ nfd/
 │   └── notifications.md  # 外部推送配置指南
 ├── .github/workflows/    # CI/CD 工作流
 │   └── deploy.yml        # 自动化构建部署脚本
-├── test/                 # 自动化测试套件
-│   └── index.js          # 功能与逻辑测试
 ├── wrangler.jsonc        # 配置文件
 ├── build.js              # 单文件打包脚本
 ├── package.json          # 项目配置与构建命令
