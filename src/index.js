@@ -16,7 +16,7 @@ import {
 } from './config.js';
 import { isDuplicateUpdate, getBotUsername } from './cache.js';
 import { fetchStartMessage } from './remote-text.js';
-import { apiUrl, sendMarkdown, getCommand, formatStartMessage, leaveChat } from './telegram.js';
+import { apiUrl, sendMarkdown, getCommand, formatStartMessage, leaveChat, isServiceMessage } from './telegram.js';
 import { handleGuestMessage, getMappedGuestId, flushStalePendingBatches } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
 import { registerBotCommands } from './commands.js';
@@ -147,6 +147,8 @@ export async function onMyChatMember(myChatMember) {
 
 export async function onMessage(message) {
   if (!message?.chat?.id) return;
+  // 服务消息（建题/置顶/进退群等）没有可转达内容且 copyMessage 必然失败，直接忽略
+  if (isServiceMessage(message)) return;
 
   const chatId = String(message.chat.id);
   const isGroup = Boolean(message.chat.type && message.chat.type !== 'private');

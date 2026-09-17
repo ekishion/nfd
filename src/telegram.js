@@ -162,6 +162,23 @@ export function getMessageText(message) {
   return message?.text || message?.caption || message?.poll?.question || message?.story?.caption || '';
 }
 
+// 建题/置顶/进退群等服务消息没有可转达的内容，copyMessage 也会被 Telegram 拒绝
+// （建题服务消息带新话题的 message_thread_id，会被话题反查命中而误触发回传复制）
+export function isServiceMessage(message) {
+  if (!message) return false;
+  return Boolean(
+    message.forum_topic_created || message.forum_topic_edited || message.forum_topic_closed ||
+    message.forum_topic_reopened || message.general_forum_topic_hidden || message.general_forum_topic_unhidden ||
+    message.pinned_message || message.new_chat_members || message.left_chat_member ||
+    message.group_chat_created || message.supergroup_chat_created || message.channel_chat_created ||
+    message.migrate_to_chat_id || message.migrate_from_chat_id ||
+    message.new_chat_title || message.new_chat_photo || message.delete_chat_photo ||
+    message.video_chat_scheduled || message.video_chat_started || message.video_chat_ended ||
+    message.video_chat_participants || message.user_shared || message.chat_shared ||
+    message.giveaway_created || message.giveaway_winners || message.giveaway_completed,
+  );
+}
+
 export function getMessageSearchableText(message) {
   if (!message) return '';
   const parts = [];
