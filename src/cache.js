@@ -263,7 +263,7 @@ export async function getGuestIdByTopic(topicId) {
 }
 
 // Guest Profiling System
-export async function trackGuestProfile(message, identityKey = null) {
+export async function trackGuestProfile(message, identityKey = null, extraProfile = {}) {
   const chatId = identityKey || String(message.chat.id);
   const key = `profile-${chatId}`;
   const now = Date.now();
@@ -283,6 +283,7 @@ export async function trackGuestProfile(message, identityKey = null) {
     messageCount: Number(current.messageCount || 0) + 1,
     name: nickname || current.name || '',
     username: fromUser.username ? `@${fromUser.username}` : (current.username || ''),
+    bio: extraProfile?.bio !== undefined ? extraProfile.bio : (current.bio || ''),
     languageCode: fromUser.language_code || current.languageCode || '',
     chatType: message.chat?.type || current.chatType || '',
     chatTitle: message.chat?.title || current.chatTitle || '',

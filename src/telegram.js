@@ -119,6 +119,10 @@ export function leaveChat(chatId) {
   return requestTelegram('leaveChat', { chat_id: chatId });
 }
 
+export function getChat(chatId) {
+  return requestTelegram('getChat', { chat_id: chatId });
+}
+
 export function escapeMarkdown(value = '') {
   return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
@@ -298,6 +302,7 @@ export function formatGuestProfile(profile = {}, tag = '', blocked = false, viol
     mdLine('备注标签', tag || '无'),
     mdLine('昵称', profile?.name || profile?.firstName || '-'),
     mdLine('用户名', profile?.username ? `@${profile.username.replace(/^@/, '')}` : '-'),
+    mdLine('个人简介', profile?.bio || '（无简介）'),
     mdLine('黑名单状态', blocked ? '已静音' : '正常'),
     mdLine('累计留言数', String(profile?.messageCount || 0)),
     mdLine('敏感词违规', String(violationCount || 0)),

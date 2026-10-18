@@ -15,7 +15,7 @@ import {
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
-import { requestTelegram, getMessageText, getMessageSearchableText, sendMarkdown, mdLine, buildUserName, getSenderKey } from './telegram.js';
+import { requestTelegram, getChat, getMessageText, getMessageSearchableText, sendMarkdown, mdLine, buildUserName, getSenderKey } from './telegram.js';
 import { dispatchNotification } from './notifiers/index.js';
 
 export function normalizeMessageText(text = '') {
@@ -137,6 +137,31 @@ export async function checkUserHasPhoto(userId) {
   }
 }
 
+export async function getUserBio(userId) {
+  const numericId = Number(userId);
+  if (!numericId || Number.isNaN(numericId) || numericId <= 0) return '';
+
+  const key = `user-bio-${numericId}`;
+  const cached = await cachedKvGetJson(key, 1800000, null);
+  if (typeof cached === 'string') return cached;
+
+  try {
+    const res = await getChat(numericId);
+    if (!res.ok) return '';
+    const bio = String(res.result?.bio || '').trim();
+    await cachedKvPutJson(key, bio, { expirationTtl: 3600 }, 1800000);
+    return bio;
+  } catch (e) {
+    console.log(JSON.stringify({ error: 'getUserBio-failed', userId, message: e.message }));
+    return '';
+  }
+}
+
+export function hasBioLinks(bio = '') {
+  if (!bio || typeof bio !== 'string') return false;
+  return /https?:\/\/|t\.me\/|telegram\.me\/|@([a-zA-Z0-9_]{4,})/i.test(bio);
+}
+
 export async function getKeywordRules() {
   const cacheKey = 'merged-keyword-rules';
   const cached = getMemoryCache(cacheKey);
@@ -151,9 +176,12 @@ export async function getKeywordRules() {
   return parsedRules;
 }
 
-export async function findBlockedKeyword(message, config = null) {
+export async function findBlockedKeyword(message, config = null, extraText = '') {
   const shouldScreenNickname = config ? config.screen_nickname !== false : true;
-  const rawContent = shouldScreenNickname ? getMessageSearchableText(message) : getMessageText(message);
+  let rawContent = shouldScreenNickname ? getMessageSearchableText(message) : getMessageText(message);
+  if (extraText) {
+    rawContent = rawContent ? `${rawContent} ${extraText}` : extraText;
+  }
   if (!rawContent) return null;
 
   const normalized = normalizeMessageText(rawContent);

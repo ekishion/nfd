@@ -83,7 +83,7 @@ export async function handleAdminMessage(message, command) {
 
   if (command === '/help') return sendAdminHelp(chatId, extra);
   if (command === '/panel' || command === '/config') {
-    return sendSettingPanel(chatId, 'moderation', extra);
+    return sendSettingPanel(chatId, 'main', extra);
   }
   if (command === '/stats') return sendStats(chatId, extra);
   if (command === '/keywords') return listKeywords(chatId, extra);

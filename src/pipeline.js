@@ -48,6 +48,8 @@ import {
   isUserBlocked,
   setUserBlocked,
   checkUserHasPhoto,
+  getUserBio,
+  hasBioLinks,
   findBlockedKeyword,
   recordKeywordViolation,
   notifyKeywordBlocked,
@@ -124,11 +126,13 @@ export async function handleGuestMessage(message) {
   const warningCooldown = getCommandWarningCooldownMs();
 
   // Parallelize analytics, profile update and user check
-  const [isBlocked] = await Promise.all([
+  const needsBio = Boolean(config.screen_bio !== false || config.req_bio || config.block_bio_links);
+  const [isBlocked, userBio] = await Promise.all([
     isUserBlocked(senderKey),
+    needsBio ? getUserBio(senderKey).catch(() => '') : Promise.resolve(''),
     incrementStat('guest-message').catch(() => {}),
-    trackGuestProfile(message, senderKey).catch(() => {}),
   ]);
+  trackGuestProfile(message, senderKey, { bio: userBio }).catch(() => {});
 
   if (isBlocked) {
     await incrementStat('blocked-user-message').catch(() => {});
@@ -190,6 +194,32 @@ export async function handleGuestMessage(message) {
         warningCooldown,
       );
     }
+  }
+
+  if (config.req_bio && !userBio) {
+    await incrementStat('no-bio-blocked').catch(() => {});
+    return sendCooldownPlainText(
+      sourceChatId,
+      `no-bio-${senderKey}`,
+      '请先在 Telegram 设置个人简介（Bio）后再留言喵。',
+      warningCooldown,
+    );
+  }
+
+  if (config.block_bio_links && hasBioLinks(userBio)) {
+    await incrementStat('bio-links-blocked').catch(() => {});
+    await dispatchNotification('security_alert', {
+      reason: '个人简介包含外链拦截',
+      senderId: senderKey,
+      senderName: buildUserName(message.from || {}),
+      detail: `Bio内容: ${userBio}`,
+    });
+    return sendCooldownPlainText(
+      sourceChatId,
+      `bio-links-${senderKey}`,
+      '抱歉，个人简介中包含引流或外链信息，暂不能转达留言喵。',
+      warningCooldown,
+    );
   }
 
   if (config.delay_seconds > 0) {
@@ -254,8 +284,9 @@ export async function processGuestMessageBatch(messages, config = null) {
 
   let blockedResult = null;
   let violatingMessage = null;
+  const userBio = config?.screen_bio !== false ? await getUserBio(senderKey).catch(() => '') : '';
   for (const msg of messages) {
-    const match = await findBlockedKeyword(msg, config);
+    const match = await findBlockedKeyword(msg, config, userBio);
     if (match && match.matched) {
       blockedResult = match;
       violatingMessage = msg;

@@ -206,7 +206,10 @@ export function getDefaultEnvConfig() {
   return {
     req_username: getOptionalEnv('ENV_REQUIRE_USERNAME', 'false') === 'true',
     req_photo: getOptionalEnv('ENV_REQUIRE_PHOTO', getOptionalEnv('ENV_REQUIRE_AVATAR', 'false')) === 'true',
+    req_bio: getOptionalEnv('ENV_REQUIRE_BIO', 'false') === 'true',
     screen_nickname: getOptionalEnv('ENV_SCREEN_NICKNAME', 'true') !== 'false',
+    screen_bio: getOptionalEnv('ENV_SCREEN_BIO', 'true') !== 'false',
+    block_bio_links: getOptionalEnv('ENV_BLOCK_BIO_LINKS', 'false') === 'true',
     auto_block: getOptionalEnv('ENV_AUTO_BLOCK_KEYWORD_VIOLATORS', 'true') !== 'false',
     violation_limit: Number(getOptionalEnv('ENV_KEYWORD_VIOLATION_LIMIT', '3')),
     delay_seconds: Math.max(0, Number(getOptionalEnv('ENV_FORWARD_DELAY_SECONDS', getOptionalEnv('ENV_FORWARD_DELAY', '0')))),
