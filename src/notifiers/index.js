@@ -11,10 +11,10 @@ import { serverchanAdapter } from './serverchan.js';
 // 单文件打包按需裁剪：未打包的适配器不会出现在作用域中，
 // 用 typeof 守卫避免「仅配置一个通道」时引用未定义标识符导致崩溃
 export const notificationProviders = {};
-if (typeof pushdeerAdapter === 'function') {
+if (typeof pushdeerAdapter !== 'undefined' && pushdeerAdapter) {
   notificationProviders.pushdeer = pushdeerAdapter;
 }
-if (typeof serverchanAdapter === 'function') {
+if (typeof serverchanAdapter !== 'undefined' && serverchanAdapter) {
   notificationProviders.serverchan = serverchanAdapter;
 }
 

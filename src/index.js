@@ -16,7 +16,7 @@ import {
 } from './config.js';
 import { isDuplicateUpdate, getBotUsername } from './cache.js';
 import { fetchStartMessage } from './remote-text.js';
-import { apiUrl, sendMarkdown, getCommand, formatStartMessage, leaveChat, isServiceMessage } from './telegram.js';
+import { requestTelegram, sendMarkdown, getCommand, formatStartMessage, leaveChat, isServiceMessage } from './telegram.js';
 import { handleGuestMessage, getMappedGuestId, flushStalePendingBatches } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
 import { registerBotCommands } from './commands.js';
@@ -235,27 +235,23 @@ export async function registerWebhook(requestUrl) {
   const webhookUrl = `${requestUrl.protocol}//${requestUrl.hostname}${WEBHOOK}`;
   const secret = getSecret();
   if (!secret) warnMissingSecret();
-  const r = await fetch(apiUrl('setWebhook'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      url: webhookUrl,
-      secret_token: secret,
-      allowed_updates: [
-        'message',
-        'edited_message',
-        'channel_post',
-        'callback_query',
-        'my_chat_member',
-        'business_message',
-        'edited_business_message',
-        'deleted_business_messages',
-        'business_connection',
-        'message_reaction',
-      ],
-      drop_pending_updates: true,
-    }),
-  }).then((response) => response.json());
+  const r = await requestTelegram('setWebhook', {
+    url: webhookUrl,
+    secret_token: secret,
+    allowed_updates: [
+      'message',
+      'edited_message',
+      'channel_post',
+      'callback_query',
+      'my_chat_member',
+      'business_message',
+      'edited_business_message',
+      'deleted_business_messages',
+      'business_connection',
+      'message_reaction',
+    ],
+    drop_pending_updates: true,
+  });
 
   // 命令菜单由 ENV_BOT_COMMANDS 驱动，未配置时该功能不生效（可选模块，见 build.js FEATURE_MODULES）
   await registerBotCommands();
@@ -264,11 +260,7 @@ export async function registerWebhook(requestUrl) {
 }
 
 export async function unRegisterWebhook() {
-  const r = await fetch(apiUrl('setWebhook'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ url: '' }),
-  }).then((response) => response.json());
+  const r = await requestTelegram('setWebhook', { url: '' });
   return new Response(r.ok ? 'Ok' : JSON.stringify(r, null, 2));
 }
 

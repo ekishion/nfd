@@ -4,7 +4,7 @@
 
 import { getToken, PARSE_MODE } from './config.js';
 
-export function apiUrl(methodName, params = null) {
+function apiUrl(methodName, params = null) {
   const token = getToken();
   const query = params ? `?${new URLSearchParams(params).toString()}` : '';
   return `https://api.telegram.org/bot${token}/${methodName}${query}`;
@@ -53,58 +53,12 @@ export function copyMessage(msg = {}) {
   return requestTelegram('copyMessage', msg);
 }
 
-export function copyMessages(chatId, fromChatId, messageIds = [], extra = {}) {
-  return requestTelegram('copyMessages', {
-    chat_id: chatId,
-    from_chat_id: fromChatId,
-    message_ids: messageIds,
-    ...extra,
-  });
-}
-
 export function forwardMessage(msg = {}) {
   return requestTelegram('forwardMessage', msg);
 }
 
 export function deleteMessage(msg = {}) {
   return requestTelegram('deleteMessage', msg);
-}
-
-export function deleteMessages(chatId, messageIds = []) {
-  if (!messageIds || !messageIds.length) return Promise.resolve({ ok: true });
-  if (messageIds.length === 1) return deleteMessage({ chat_id: chatId, message_id: messageIds[0] });
-  return requestTelegram('deleteMessages', {
-    chat_id: chatId,
-    message_ids: messageIds,
-  });
-}
-
-export function setMessageReaction(chatId, messageId, reaction = '👍', isBig = false) {
-  let reactionObj = [];
-  if (typeof reaction === 'string' && reaction) {
-    reactionObj = [{ type: 'emoji', emoji: reaction }];
-  } else if (Array.isArray(reaction)) {
-    reactionObj = reaction.map((r) => (typeof r === 'string' ? { type: 'emoji', emoji: r } : r));
-  } else if (reaction && typeof reaction === 'object') {
-    reactionObj = [reaction];
-  }
-  return requestTelegram('setMessageReaction', {
-    chat_id: chatId,
-    message_id: messageId,
-    reaction: reactionObj,
-    is_big: isBig,
-  });
-}
-
-export function deleteMessageReaction(chatId, messageId) {
-  return setMessageReaction(chatId, messageId, []);
-}
-
-export function deleteAllMessageReactions(chatId, messageId) {
-  return requestTelegram('deleteAllMessageReactions', {
-    chat_id: chatId,
-    message_id: messageId,
-  });
 }
 
 export function answerCallbackQuery(msg = {}) {
@@ -125,21 +79,6 @@ export function getChat(chatId) {
 
 export function escapeMarkdown(value = '') {
   return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
-}
-
-export function blockquote(text = '') {
-  return String(text)
-    .split('\n')
-    .map((line) => `>${line}`)
-    .join('\n');
-}
-
-export function expandableBlockquote(text = '') {
-  const quoted = String(text)
-    .split('\n')
-    .map((line) => `>${line}`)
-    .join('\n');
-  return `**${quoted}**`;
 }
 
 export function copyTextButton(text, copyText) {

@@ -15,8 +15,6 @@ import {
   sleep,
 } from './config.js';
 import {
-  cachedKvGetJson,
-  cachedKvPutJson,
   getMemoryCache,
   setMemoryCache,
   kvGetJson,

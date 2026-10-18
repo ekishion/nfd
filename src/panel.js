@@ -6,10 +6,7 @@ import {
   getRuntimeConfig,
   updateRuntimeConfig,
   invalidateMemoryCache,
-  fetchKeywordDb,
-  asArray,
-  cachedKvGetJson,
-  cachedKvPutJson,
+  syncRemoteKeywordRules,
   getStatCount,
 } from './cache.js';
 import { hasExternalNotifier } from './config.js';
@@ -245,21 +242,12 @@ export async function handleSettingCallback(callbackQuery) {
 
   if (action === 'action') {
     if (key === 'sync_keywords') {
-      const remote = await fetchKeywordDb();
-      if (!remote || !remote.length) {
-        return answerCallbackQuery({
-          callback_query_id: callbackQuery.id,
-          text: '未能从远程数据库获取到关键词规则。',
-          show_alert: true,
-        });
-      }
-      const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
-      const merged = Array.from(new Set([...current, ...remote]));
-      await cachedKvPutJson('keyword-rules', merged, {}, 3600000);
-      invalidateMemoryCache('merged-keyword-rules');
+      const count = await syncRemoteKeywordRules();
       return answerCallbackQuery({
         callback_query_id: callbackQuery.id,
-        text: `已完成规则库同步，当前共有 ${merged.length} 条拦截规则生效！`,
+        text: count !== null
+          ? `已完成规则库同步，当前共有 ${count} 条拦截规则生效！`
+          : '未能从远程数据库获取到关键词规则。',
         show_alert: true,
       });
     }

@@ -21,12 +21,9 @@ import { dispatchNotification } from './notifiers/index.js';
 export function normalizeMessageText(text = '') {
   if (!text || typeof text !== 'string') return '';
   return text
+    .normalize('NFKC')
     // Strip zero-width, invisible & direction marks
     .replace(/[\u200B-\u200F\uFEFF\u2060\u180E\u00AD]/g, '')
-    // Convert full-width ASCII to standard half-width
-    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
-    // Convert full-width space to standard space
-    .replace(/\u3000/g, ' ')
     // Normalize multi-whitespace
     .replace(/\s+/g, ' ')
     .trim();

@@ -34,7 +34,7 @@ const FEATURE_MODULES = [
     envs: ['ENV_BOT_COMMANDS'],
     stub: `
 export async function registerBotCommands() {
-  await fetch(apiUrl('deleteMyCommands'), { method: 'POST' }).catch(() => {});
+  await requestTelegram('deleteMyCommands').catch(() => {});
 }
 `,
   },

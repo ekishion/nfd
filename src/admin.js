@@ -2,7 +2,7 @@
 // src/admin.js - Admin Commands, Callback Query Router & Guest Management
 // ==============================================================================
 
-import { MESSAGE_MAP_TTL, getAdminUid, getCommandWarningCooldownMs, asArray } from './config.js';
+import { getAdminUid, getCommandWarningCooldownMs, asArray } from './config.js';
 import {
   kvGetJson,
   kvPutJson,
@@ -12,7 +12,7 @@ import {
   incrementStat,
   getStatCount,
   sendCooldownPlainText,
-  fetchKeywordDb,
+  syncRemoteKeywordRules,
   getGuestTag,
   setGuestTag,
   getGuestProfile,
@@ -21,7 +21,6 @@ import {
   deleteQuickReply,
   listQuickReplies,
   updateRuntimeConfig,
-  getRuntimeConfig,
 } from './cache.js';
 import {
   sendMarkdown,
@@ -38,7 +37,7 @@ import {
   revokeReplyKeyboard,
 } from './telegram.js';
 import { isUserBlocked, setUserBlocked, getKeywordRules } from './moderation.js';
-import { getMappedGuestId, rememberMessageMap } from './pipeline.js';
+import { getMappedGuestId } from './pipeline.js';
 import { sendSettingPanel, handleSettingCallback } from './panel.js';
 
 export async function rememberForceReplyPrompt(promptMessageId, guestChatId) {
@@ -227,18 +226,7 @@ export async function onCallbackQuery(callbackQuery) {
         show_alert: true,
       });
     }
-    const [profile, tag, blocked, violation] = await Promise.all([
-      getGuestProfile(guestChatId),
-      getGuestTag(guestChatId),
-      isUserBlocked(guestChatId),
-      kvGetJson(`keyword-violation-${guestChatId}`, null),
-    ]);
-    const lines = formatGuestProfile(profile || { userId: guestChatId }, tag, blocked, violation?.count);
-    const profileKeyboard = guestProfileKeyboard(guestChatId);
-    await sendMarkdown(chatId, lines, {
-      ...extra,
-      ...(profileKeyboard ? { reply_markup: profileKeyboard } : {}),
-    });
+    await sendUserProfileCard(chatId, guestChatId, extra);
     return answerCallbackQuery({ callback_query_id: callbackQuery.id });
   }
 
@@ -479,6 +467,21 @@ export async function handleBackMode(chatId, extra = {}) {
   return sendMarkdown(chatId, '已关闭离开模式，恢复正常在线状态喵！', extra);
 }
 
+export async function sendUserProfileCard(chatId, targetId, extra = {}) {
+  const [profile, tag, blocked, violation] = await Promise.all([
+    getGuestProfile(targetId),
+    getGuestTag(targetId),
+    isUserBlocked(targetId),
+    kvGetJson(`keyword-violation-${targetId}`, null),
+  ]);
+  const lines = formatGuestProfile(profile || { userId: targetId }, tag, blocked, violation?.count);
+  const profileKeyboard = guestProfileKeyboard(targetId);
+  return sendMarkdown(chatId, lines, {
+    ...extra,
+    ...(profileKeyboard ? { reply_markup: profileKeyboard } : {}),
+  });
+}
+
 export async function handleUserProfile(message) {
   const { chatId, extra } = getReplyContext(message);
   if (!chatId) return;
@@ -489,19 +492,7 @@ export async function handleUserProfile(message) {
     return sendMarkdown(chatId, '用法：回复客人留言发送 `/user`，或直接发送 `/user 用户ID`。', extra);
   }
 
-  const [profile, tag, blocked, violation] = await Promise.all([
-    getGuestProfile(targetId),
-    getGuestTag(targetId),
-    isUserBlocked(targetId),
-    kvGetJson(`keyword-violation-${targetId}`, null),
-  ]);
-
-  const lines = formatGuestProfile(profile || { userId: targetId }, tag, blocked, violation?.count);
-  const profileKeyboard = guestProfileKeyboard(targetId);
-  return sendMarkdown(chatId, lines, {
-    ...extra,
-    ...(profileKeyboard ? { reply_markup: profileKeyboard } : {}),
-  });
+  return sendUserProfileCard(chatId, targetId, extra);
 }
 
 export async function handleTagGuest(message) {
@@ -667,13 +658,9 @@ export async function deleteKeyword(message) {
 
 export async function syncKeywordDb(chatId, extra = {}) {
   if (!chatId) return;
-  const remote = await fetchKeywordDb();
-  if (!remote || !remote.length) {
+  const count = await syncRemoteKeywordRules();
+  if (count === null) {
     return sendMarkdown(chatId, '未能从远程数据库获取到关键词规则喵。', extra);
   }
-  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
-  const merged = Array.from(new Set([...current, ...remote]));
-  await cachedKvPutJson('keyword-rules', merged, {}, 3600000);
-  invalidateMemoryCache('merged-keyword-rules');
-  return sendMarkdown(chatId, escapeMarkdown(`已完成同步，当前共有 ${merged.length} 条拦截规则生效喵！`), extra);
+  return sendMarkdown(chatId, escapeMarkdown(`已完成同步，当前共有 ${count} 条拦截规则生效喵！`), extra);
 }

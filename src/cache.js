@@ -11,10 +11,9 @@ import {
   getAlertChatId,
   getAlertThreadId,
   getEnableForumTopics,
-  getToken,
   asArray,
 } from './config.js';
-import { sendPlainText } from './telegram.js';
+import { sendPlainText, requestTelegram } from './telegram.js';
 
 export const memoryCache = new Map();
 const pendingStats = new Map();
@@ -301,13 +300,7 @@ export async function getGuestProfile(chatId) {
 
 // Quick Reply System
 export async function listQuickReplies() {
-  const cacheKey = 'quick-replies-index';
-  const cached = getMemoryCache(cacheKey);
-  if (cached) return cached;
-
-  const list = asArray(await kvGetJson('quick-replies-list', []));
-  setMemoryCache(cacheKey, list, 120000);
-  return list;
+  return cachedKvGetJson('quick-replies-list', 120000, []);
 }
 
 export async function getQuickReply(tag) {
@@ -320,11 +313,9 @@ export async function setQuickReply(tag, content) {
   const key = `quick-reply-${cleanTag}`;
   await cachedKvPutJson(key, content, {}, 300000);
 
-  const list = await listQuickReplies();
+  const list = asArray(await listQuickReplies());
   if (!list.includes(cleanTag)) {
-    const nextList = [...list, cleanTag];
-    await cachedKvPutJson('quick-replies-list', nextList, {}, 300000);
-    setMemoryCache('quick-replies-index', nextList, 120000);
+    await cachedKvPutJson('quick-replies-list', [...list, cleanTag], {}, 120000);
   }
 }
 
@@ -334,10 +325,8 @@ export async function deleteQuickReply(tag) {
   invalidateMemoryCache(key);
   await kvDelete(key);
 
-  const list = await listQuickReplies();
-  const nextList = list.filter((t) => t !== cleanTag);
-  await cachedKvPutJson('quick-replies-list', nextList, {}, 300000);
-  setMemoryCache('quick-replies-index', nextList, 120000);
+  const list = asArray(await listQuickReplies());
+  await cachedKvPutJson('quick-replies-list', list.filter((t) => t !== cleanTag), {}, 120000);
 }
 
 export async function fetchRemoteDb(url, ttl = FRAUD_CACHE_TTL) {
@@ -369,15 +358,22 @@ export async function fetchKeywordDb() {
   return fetchRemoteDb(getKeywordDbUrl());
 }
 
+export async function syncRemoteKeywordRules() {
+  const remote = await fetchKeywordDb();
+  if (!remote || !remote.length) return null;
+  const current = asArray(await cachedKvGetJson('keyword-rules', 120000, []));
+  const merged = Array.from(new Set([...current, ...remote]));
+  await cachedKvPutJson('keyword-rules', merged, {}, 3600000);
+  invalidateMemoryCache('merged-keyword-rules');
+  return merged.length;
+}
+
 export async function getBotUsername() {
   const cacheKey = 'bot-username';
   const cached = getMemoryCache(cacheKey);
   if (cached) return cached;
-  const token = getToken();
-  if (!token) return '';
   try {
-    const res = await fetch(`https://api.telegram.org/bot${token}/getMe`);
-    const data = await res.json();
+    const data = await requestTelegram('getMe');
     if (data.ok && data.result?.username) {
       setMemoryCache(cacheKey, data.result.username, 86400000);
       return data.result.username;
