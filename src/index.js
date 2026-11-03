@@ -14,9 +14,11 @@ import {
   getAlertChatId,
   getListenChatIds,
 } from './config.js';
-import { isDuplicateUpdate, getBotUsername } from './cache.js';
+import { isDuplicateUpdate } from './memory-cache.js';
+import { getBotUsername } from './cache.js';
 import { fetchStartMessage } from './remote-text.js';
-import { requestTelegram, sendMarkdown, getCommand, formatStartMessage, leaveChat, isServiceMessage } from './telegram.js';
+import { requestTelegram, sendMarkdown, leaveChat } from './telegram.js';
+import { getCommand, formatStartMessage, isServiceMessage } from './format.js';
 import { handleGuestMessage, getMappedGuestId, flushStalePendingBatches } from './pipeline.js';
 import { handleAdminMessage, handleGuestAdminCommand, onCallbackQuery } from './admin.js';
 import { registerBotCommands } from './commands.js';
@@ -155,8 +157,9 @@ export async function onMessage(message) {
   // 频道帖不参与命令解析，只保留回复转达留言的管理流（reply → 消息映射）
   const isChannel = message.chat.type === 'channel';
 
-  const botUsername = await getBotUsername();
-  const command = isChannel ? '' : getCommand(message, botUsername);
+  // botUsername 仅在命令带 @bot 后缀时才有意义，惰性获取避免冷启动先等一次 getMe
+  const needsBotUsername = typeof message.text === 'string' && message.text.includes('@');
+  const command = isChannel ? '' : getCommand(message, needsBotUsername ? await getBotUsername() : '');
 
   const adminUid = getAdminUid();
   const forwardChatId = getForwardChatId();
@@ -238,6 +241,8 @@ export async function registerWebhook(requestUrl) {
   const r = await requestTelegram('setWebhook', {
     url: webhookUrl,
     secret_token: secret,
+    // 仅订阅 onUpdate 实际处理的类型；多余的订阅（如 message_reaction）只会
+    // 平白增加大群的 webhook 请求量
     allowed_updates: [
       'message',
       'edited_message',
@@ -246,9 +251,6 @@ export async function registerWebhook(requestUrl) {
       'my_chat_member',
       'business_message',
       'edited_business_message',
-      'deleted_business_messages',
-      'business_connection',
-      'message_reaction',
     ],
     drop_pending_updates: true,
   });

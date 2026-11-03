@@ -11,8 +11,11 @@
 //   --all / BUILD_ALL=true / BUILD_ALL_NOTIFIERS=true / NODE_ENV=test 时全量打包
 // ==============================================================================
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const SRC_DIR = path.join(__dirname, 'src');
 const DATA_DIR = path.join(__dirname, 'data');
@@ -97,6 +100,9 @@ function resolveActiveModules() {
   });
 
   const baseModules = [
+    // 无依赖纯函数模块放最前：打包后所有函数共享顶层作用域
+    'format.js',
+    'memory-cache.js',
     'config.js',
     'cache.js',
     'telegram.js',

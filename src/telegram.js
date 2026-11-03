@@ -1,8 +1,10 @@
 // ==============================================================================
-// src/telegram.js - Telegram API Client, Message Formatting & Keyboard Builders
+// src/telegram.js - Telegram API Client & High-level Send Helpers
+// 纯文本格式化 / 键盘构建等无副作用工具见 ./format.js
 // ==============================================================================
 
-import { getToken, PARSE_MODE } from './config.js';
+import { getToken, PARSE_MODE, sleep } from './config.js';
+import { isMessageNotModified } from './format.js';
 
 function apiUrl(methodName, params = null) {
   const token = getToken();
@@ -10,14 +12,25 @@ function apiUrl(methodName, params = null) {
   return `https://api.telegram.org/bot${token}/${methodName}${query}`;
 }
 
+async function post(methodName, body) {
+  const response = await fetch(apiUrl(methodName), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return response.json();
+}
+
 export async function requestTelegram(methodName, body = {}) {
   try {
-    const response = await fetch(apiUrl(methodName), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await response.json();
+    let data = await post(methodName, body);
+    // 批量转达容易撞到 Telegram 频控，短等待（≤5s）后重试一次，避免消息漏转
+    const retryAfter = Number(data.parameters?.retry_after || 0);
+    if (!data.ok && data.error_code === 429 && retryAfter > 0 && retryAfter <= 5) {
+      console.log(JSON.stringify({ methodName, warning: 'telegram-429-retry', retryAfter }));
+      await sleep(retryAfter * 1000 + 250);
+      data = await post(methodName, body);
+    }
     if (!data.ok) {
       console.log(JSON.stringify({ methodName, error: data.description, body }));
     }
@@ -43,10 +56,6 @@ export async function editMessageText(msg = {}) {
     return { ok: true, result: true };
   }
   return data;
-}
-
-export function isMessageNotModified(description) {
-  return /message is not modified/i.test(String(description || ''));
 }
 
 export function copyMessage(msg = {}) {
@@ -77,17 +86,6 @@ export function getChat(chatId) {
   return requestTelegram('getChat', { chat_id: chatId });
 }
 
-export function escapeMarkdown(value = '') {
-  return String(value).replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
-}
-
-export function copyTextButton(text, copyText) {
-  return {
-    text,
-    copy_text: { text: String(copyText) },
-  };
-}
-
 export function sendMarkdown(chatId, text, extra = {}) {
   return sendMessage({
     chat_id: chatId,
@@ -105,195 +103,3 @@ export function sendPlainText(chatId, text, extra = {}) {
     ...extra,
   });
 }
-
-export function mdLine(label, value) {
-  return `*${escapeMarkdown(label)}:* ${escapeMarkdown(value || '-')}`;
-}
-
-export function getMessageText(message) {
-  return message?.text || message?.caption || message?.poll?.question || message?.story?.caption || '';
-}
-
-// 建题/置顶/进退群等服务消息没有可转达的内容，copyMessage 也会被 Telegram 拒绝
-// （建题服务消息带新话题的 message_thread_id，会被话题反查命中而误触发回传复制）
-export function isServiceMessage(message) {
-  if (!message) return false;
-  return Boolean(
-    message.forum_topic_created || message.forum_topic_edited || message.forum_topic_closed ||
-    message.forum_topic_reopened || message.general_forum_topic_hidden || message.general_forum_topic_unhidden ||
-    message.pinned_message || message.new_chat_members || message.left_chat_member ||
-    message.group_chat_created || message.supergroup_chat_created || message.channel_chat_created ||
-    message.migrate_to_chat_id || message.migrate_from_chat_id ||
-    message.new_chat_title || message.new_chat_photo || message.delete_chat_photo ||
-    message.video_chat_scheduled || message.video_chat_started || message.video_chat_ended ||
-    message.video_chat_participants || message.user_shared || message.chat_shared ||
-    message.giveaway_created || message.giveaway_winners || message.giveaway_completed,
-  );
-}
-
-export function getMessageSearchableText(message) {
-  if (!message) return '';
-  const parts = [];
-  const text = getMessageText(message);
-  if (text) parts.push(text);
-
-  if (Array.isArray(message?.poll?.options)) {
-    for (const opt of message.poll.options) {
-      if (opt.text) parts.push(opt.text);
-    }
-  }
-
-  const from = message.from;
-  if (from) {
-    if (from.first_name) parts.push(from.first_name);
-    if (from.last_name) parts.push(from.last_name);
-    if (from.username) parts.push(`@${from.username}`);
-  }
-
-  if (message.sender_chat?.title) {
-    parts.push(message.sender_chat.title);
-  } else if (message.chat?.type && message.chat.type !== 'private' && message.chat.title) {
-    parts.push(message.chat.title);
-  }
-
-  return parts.join(' ');
-}
-
-export function getCommand(message, botUsername = '') {
-  const text = (message.text || '').trim();
-  if (!text.startsWith('/')) return '';
-  const firstToken = text.split(/\s+/)[0];
-  const atIndex = firstToken.indexOf('@');
-  if (atIndex !== -1) {
-    const cmd = firstToken.slice(0, atIndex).toLowerCase();
-    const targetBot = firstToken.slice(atIndex + 1).toLowerCase();
-    if (botUsername && targetBot !== botUsername.toLowerCase()) {
-      return '';
-    }
-    return cmd;
-  }
-  return firstToken.toLowerCase();
-}
-
-export function getCommandArgs(message) {
-  const text = (message.text || '').trim();
-  const firstSpace = text.search(/\s/);
-  return firstSpace === -1 ? '' : text.slice(firstSpace).trim();
-}
-
-export function buildUserName(user = {}) {
-  const nickname = [user.first_name, user.last_name].filter(Boolean).join(' ').trim();
-  if (nickname) return nickname;
-  if (user.username) return `@${user.username}`;
-  return String(user.id || '');
-}
-
-// 群聊 / 频道里所有成员共享同一个 chat.id，客人身份必须按实际发送者区分：
-// 普通成员用 from.id；频道帖或匿名管理员（无 from）用 sender_chat.id；私聊退回 chat.id
-export function getSenderKey(message) {
-  if (message?.chat?.type && message.chat.type !== 'private') {
-    if (message.from?.id) return String(message.from.id);
-    if (message.sender_chat?.id) return String(message.sender_chat.id);
-  }
-  return String(message.chat.id);
-}
-
-export function formatStartMessage(template, user) {
-  const username = escapeMarkdown(buildUserName(user));
-  return template
-    .replaceAll('{username}', username)
-    .replaceAll('{id}', String(user.id || ''))
-    .replaceAll('{name}', username)
-    .replaceAll('{用户名}', username);
-}
-
-export function buildMessageInfo(message, count = 1, tag = '') {
-  const user = message.from || {};
-  // 频道帖等无发送者信息的场景回退到会话标题
-  const senderName = buildUserName(user) || message.chat?.title || '匿名来源';
-  const guestLabel = tag ? `${senderName} [${tag}]` : `${senderName} (${user.id || message.chat.id})`;
-  const lines = [
-    '*人偶收到新留言*',
-    mdLine('客人', guestLabel),
-  ];
-  if (user.username) {
-    lines.push(mdLine('用户名', `@${user.username}`));
-  }
-  if (tag) {
-    lines.push(mdLine('备注', tag));
-  }
-  if (message.chat?.type && message.chat.type !== 'private') {
-    lines.push(mdLine('来源会话', `${message.chat.title || message.chat.id} / ${message.chat.type}`));
-  }
-  if (count > 1) {
-    lines.push(mdLine('连续留言', `${count} 条`));
-  }
-  return lines.join('\n');
-}
-
-export function formatGuestProfile(profile = {}, tag = '', blocked = false, violationCount = 0) {
-  const firstSeenStr = profile?.firstSeen ? new Date(profile.firstSeen).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '-';
-  const lastSeenStr = profile?.lastSeen ? new Date(profile.lastSeen).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) : '-';
-
-  return [
-    '*客人画像档案*',
-    mdLine('用户ID', profile?.userId || profile?.chatId || '-'),
-    mdLine('备注标签', tag || '无'),
-    mdLine('昵称', profile?.name || profile?.firstName || '-'),
-    mdLine('用户名', profile?.username ? `@${profile.username.replace(/^@/, '')}` : '-'),
-    mdLine('个人简介', profile?.bio || '（无简介）'),
-    mdLine('黑名单状态', blocked ? '已静音' : '正常'),
-    mdLine('累计留言数', String(profile?.messageCount || 0)),
-    mdLine('敏感词违规', String(violationCount || 0)),
-    mdLine('首次留言', firstSeenStr),
-    mdLine('最后活跃', lastSeenStr),
-  ].join('\n');
-}
-
-export function adminMessageKeyboard(guestChatId = '') {
-  const suffix = guestChatId ? `:${guestChatId}` : '';
-  const rows = [
-    [
-      { text: '回复', callback_data: `reply${suffix}` },
-      { text: '信息', callback_data: `info${suffix}` },
-      { text: '撤回最近回复', callback_data: `revoke:last${suffix}` },
-    ],
-    [
-      { text: '屏蔽', callback_data: `block${suffix}` },
-      { text: '解除屏蔽', callback_data: `unblock${suffix}` },
-      { text: '检查', callback_data: `checkblock${suffix}` },
-    ],
-  ];
-  if (guestChatId) {
-    rows.push([
-      copyTextButton('📋 复制客人 UID', guestChatId),
-    ]);
-  }
-  return { inline_keyboard: rows };
-}
-
-export function guestProfileKeyboard(guestChatId = '') {
-  if (!guestChatId) return null;
-  const suffix = `:${guestChatId}`;
-  return {
-    inline_keyboard: [
-      [
-        { text: '回复', callback_data: `reply${suffix}` },
-        { text: '屏蔽', callback_data: `block${suffix}` },
-        { text: '解除屏蔽', callback_data: `unblock${suffix}` },
-      ],
-      [
-        copyTextButton('📋 复制客人 UID', guestChatId),
-      ],
-    ],
-  };
-}
-
-export function revokeReplyKeyboard(guestChatId, messageId) {
-  return {
-    inline_keyboard: [[
-      { text: '撤回这条回复', callback_data: `revoke:${guestChatId}:${messageId}` },
-    ]],
-  };
-}
-

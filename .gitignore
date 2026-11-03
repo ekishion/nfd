@@ -138,4 +138,6 @@ dist
 
 todo.md
 .zcode/
-test/
+# 本地试验脚本不跟踪，单元测试例外（纯 Node 单测，npm test 会执行）
+test/*
+!test/index.js

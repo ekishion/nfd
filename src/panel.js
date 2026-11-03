@@ -5,11 +5,12 @@
 import {
   getRuntimeConfig,
   updateRuntimeConfig,
-  invalidateMemoryCache,
   syncRemoteKeywordRules,
   getStatCount,
 } from './cache.js';
+import { invalidateMemoryCache } from './memory-cache.js';
 import { hasExternalNotifier } from './config.js';
+import { utcDateKey } from './format.js';
 import {
   sendMarkdown,
   editMessageText,
@@ -253,8 +254,7 @@ export async function handleSettingCallback(callbackQuery) {
     }
 
     if (key === 'stats') {
-      const now = new Date();
-      const dateKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+      const dateKey = utcDateKey();
       const [guestMessages, adminReplies, keywordBlocked, autoBlocked, blockedUsers] = await Promise.all([
         getStatCount('guest-message', dateKey),
         getStatCount('admin-replied', dateKey),

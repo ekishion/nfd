@@ -3,12 +3,12 @@
 // ==============================================================================
 
 import { getAdminUid, getCommandWarningCooldownMs, asArray } from './config.js';
+import { invalidateMemoryCache } from './memory-cache.js';
 import {
   kvGetJson,
   kvPutJson,
   cachedKvGetJson,
   cachedKvPutJson,
-  invalidateMemoryCache,
   incrementStat,
   getStatCount,
   sendCooldownPlainText,
@@ -28,6 +28,8 @@ import {
   copyMessage,
   deleteMessage,
   answerCallbackQuery,
+} from './telegram.js';
+import {
   escapeMarkdown,
   mdLine,
   getCommandArgs,
@@ -35,7 +37,9 @@ import {
   formatGuestProfile,
   guestProfileKeyboard,
   revokeReplyKeyboard,
-} from './telegram.js';
+  resolveTargetGuestId,
+  utcDateKey,
+} from './format.js';
 import { isUserBlocked, setUserBlocked, getKeywordRules } from './moderation.js';
 import { getMappedGuestId } from './pipeline.js';
 import { sendSettingPanel, handleSettingCallback } from './panel.js';
@@ -329,14 +333,6 @@ export async function onCallbackQuery(callbackQuery) {
   return answerCallbackQuery({ callback_query_id: callbackQuery.id });
 }
 
-function resolveTargetGuestId(message, mappedGuestId) {
-  const args = getCommandArgs(message);
-  if (args && /^\d+$/.test(args)) {
-    return args;
-  }
-  return mappedGuestId;
-}
-
 export async function handleBlock(message) {
   const { chatId, extra } = getReplyContext(message);
   if (!chatId) return;
@@ -554,8 +550,7 @@ export async function sendAdminHelp(chatId, extra = {}, prefix = '') {
 }
 
 export async function sendStats(chatId, extra = {}) {
-  const now = new Date();
-  const dateKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+  const dateKey = utcDateKey();
 
   const [
     guestMessages,

@@ -5,7 +5,8 @@
 // ==============================================================================
 
 import { getGuestTopicId, setGuestTopicId } from './cache.js';
-import { buildUserName, createForumTopic } from './telegram.js';
+import { createForumTopic } from './telegram.js';
+import { buildUserName } from './format.js';
 
 export async function resolveForumTopicThreadId(config, firstMessage, senderKey, forwardChatId) {
   if (!config.enable_forum_topics || !forwardChatId.startsWith('-')) return null;

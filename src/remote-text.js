@@ -4,7 +4,7 @@
 // ENV_START_MESSAGE_URL / ENV_NOTIFICATION_URL 均未配置时由 build.js 裁剪
 // ==============================================================================
 
-import { getMemoryCache, setMemoryCache } from './cache.js';
+import { getMemoryCache, setMemoryCache } from './memory-cache.js';
 import { getNotificationUrl, getStartMsgUrl } from './config.js';
 
 export async function fetchTextOrDefault(url, fallback) {

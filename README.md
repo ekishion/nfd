@@ -38,9 +38,11 @@ No Fraud / Node Forward Bot
 nfd/
 ├── src/
 │   ├── notifiers/        # 外部通知子模块目录
+│   ├── format.js         # 纯函数：文本格式化、命令解析与审查辅助
+│   ├── memory-cache.js   # isolate 级内存 TTL 缓存与 update 去重
 │   ├── config.js         # 环境变量、常量与数据文案引入
-│   ├── cache.js          # 内存缓存、KV 存储与远程数据库拉取
-│   ├── telegram.js       # Telegram API 封装与消息格式化
+│   ├── cache.js          # KV 存储与远程数据库拉取
+│   ├── telegram.js       # Telegram API 封装（含 429 限流重试）
 │   ├── commands.js       # Bot 命令菜单注册（可选功能模块）
 │   ├── forum.js          # 论坛话题自动创建（可选功能模块）
 │   ├── remote-text.js    # 远程自定义文案（可选功能模块）

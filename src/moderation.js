@@ -3,11 +3,10 @@
 // ==============================================================================
 
 import { getAdminUid, getKeywordViolationTtl, asArray } from './config.js';
+import { getMemoryCache, setMemoryCache } from './memory-cache.js';
 import {
   cachedKvGetJson,
   cachedKvPutJson,
-  getMemoryCache,
-  setMemoryCache,
   kvGetJson,
   kvPutJson,
   kvGetText,
@@ -15,51 +14,19 @@ import {
   incrementStat,
   fetchKeywordDb,
 } from './cache.js';
-import { requestTelegram, getChat, getMessageText, getMessageSearchableText, sendMarkdown, mdLine, buildUserName, getSenderKey } from './telegram.js';
+import { requestTelegram, getChat, sendMarkdown } from './telegram.js';
+import {
+  getMessageText,
+  getMessageSearchableText,
+  mdLine,
+  buildUserName,
+  getSenderKey,
+  normalizeMessageText,
+  parseKeywordRule,
+  hasBioLinks,
+  isDangerousDocument,
+} from './format.js';
 import { dispatchNotification } from './notifiers/index.js';
-
-export function normalizeMessageText(text = '') {
-  if (!text || typeof text !== 'string') return '';
-  return text
-    .normalize('NFKC')
-    // Strip zero-width, invisible & direction marks
-    .replace(/[\u200B-\u200F\uFEFF\u2060\u180E\u00AD]/g, '')
-    // Normalize multi-whitespace
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-export function parseKeywordRule(rawRule) {
-  const raw = String(rawRule || '').trim();
-  if (!raw) return null;
-
-  const regexMatch = raw.match(/^\/(.+)\/([a-z]*)$/i);
-  if (regexMatch) {
-    const [, pattern, flags] = regexMatch;
-    try {
-      const safeFlags = flags.includes('i') ? flags : `${flags}i`;
-      const regex = new RegExp(pattern, safeFlags);
-      return {
-        raw,
-        isRegex: true,
-        regex,
-      };
-    } catch (err) {
-      console.log(JSON.stringify({ error: 'invalid-regex-rule', raw, message: err.message }));
-      return {
-        raw,
-        isRegex: false,
-        text: raw.toLowerCase(),
-      };
-    }
-  }
-
-  return {
-    raw,
-    isRegex: false,
-    text: raw.toLowerCase(),
-  };
-}
 
 export async function isUserBlocked(chatId) {
   return cachedKvGetJson(`isblocked-${chatId}`, 60000, false);
@@ -96,14 +63,6 @@ export async function checkFloodLimit(chatId, config) {
   }
 
   return { blocked: false };
-}
-
-export function isDangerousDocument(message) {
-  const doc = message?.document;
-  if (!doc || !doc.file_name) return false;
-  const fileName = doc.file_name.toLowerCase();
-  const dangerousExts = ['.exe', '.bat', '.apk', '.cmd', '.vbs', '.ps1', '.scr', '.sh', '.jar', '.msi', '.dll', '.pif'];
-  return dangerousExts.some((ext) => fileName.endsWith(ext));
 }
 
 export async function checkUserHasPhoto(userId) {
@@ -152,11 +111,6 @@ export async function getUserBio(userId) {
     console.log(JSON.stringify({ error: 'getUserBio-failed', userId, message: e.message }));
     return '';
   }
-}
-
-export function hasBioLinks(bio = '') {
-  if (!bio || typeof bio !== 'string') return false;
-  return /https?:\/\/|t\.me\/|telegram\.me\/|@([a-zA-Z0-9_]{4,})/i.test(bio);
 }
 
 export async function getKeywordRules() {

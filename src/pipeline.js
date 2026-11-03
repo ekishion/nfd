@@ -11,17 +11,19 @@ import {
   getForwardChatId,
   getUserAckCooldownMs,
   getCommandWarningCooldownMs,
-  asArray,
   sleep,
 } from './config.js';
 import {
   getMemoryCache,
   setMemoryCache,
+} from './memory-cache.js';
+import {
   kvGetJson,
   kvPutJson,
   kvGetText,
   kvPutText,
   kvList,
+  kvDelete,
   getRuntimeConfig,
   incrementStat,
   sendCooldownPlainText,
@@ -36,12 +38,14 @@ import {
   sendMarkdown,
   copyMessage,
   forwardMessage,
+} from './telegram.js';
+import {
   mdLine,
   buildMessageInfo,
   buildUserName,
   getSenderKey,
   adminMessageKeyboard,
-} from './telegram.js';
+} from './format.js';
 import {
   isUserBlocked,
   setUserBlocked,
@@ -227,42 +231,71 @@ export async function handleGuestMessage(message) {
   return processGuestMessageBatch([message], config);
 }
 
+// 延迟批次：每条消息存独立 key（写入天然原子，并发到达不会互相覆盖），
+// pending-token-<sender> 作为批次认领凭据；旧版整批 key 不再读取，随原 TTL 自行过期
+const PENDING_TTL_SECONDS = 300;
+const CLAIM_TTL_SECONDS = 120;
+const CLAIM_STALE_MS = 60 * 1000; // 认领超时视为处理方已失联，scheduled 可接管
+
+function pendingMsgKey(senderKey, messageId) {
+  return `pending-msgs-${senderKey}-${messageId}`;
+}
+
+function pendingTokenKey(senderKey) {
+  return `pending-token-${senderKey}`;
+}
+
+// 尽力互斥：KV 是最终一致的，写入认领值后回读确认并不能严格证明独占，
+// 极端并发窗口内仍可能双发——重复转达比丢留言可接受。
+// CLAIM_TTL 故意大于 CLAIM_STALE_MS：认领值要先活过过期线，cron 才能凭它判断处理方是否失联
+async function flushPendingBatch(senderKey, config) {
+  const tokenKey = pendingTokenKey(senderKey);
+  const claim = `claim:${Date.now()}`;
+  await kvPutJson(tokenKey, claim, { expirationTtl: CLAIM_TTL_SECONDS });
+  if ((await kvGetJson(tokenKey, null)) !== claim) return;
+
+  const keys = await kvList(`pending-msgs-${senderKey}-`, 50);
+  const batch = [];
+  const claimedKeys = [];
+  await Promise.all(keys.map(async (k) => {
+    const msg = await kvGetJson(k.name, null);
+    if (msg?.message_id) {
+      batch.push(msg);
+      claimedKeys.push(k.name);
+    }
+  }));
+  if (!batch.length) return;
+
+  // 按消息时间与 ID 排序，保证转达顺序与客人发送顺序一致
+  batch.sort((a, b) => (Number(a.date) || 0) - (Number(b.date) || 0) || (Number(a.message_id) || 0) - (Number(b.message_id) || 0));
+  await processGuestMessageBatch(batch, config);
+  // 处理完成后才删 key（at-least-once）：中途崩溃整批留在 KV，由 scheduled 补发，
+  // 代价是已转达的消息可能重复一次
+  await Promise.all(claimedKeys.map((key) => kvDelete(key)));
+}
+
 export async function handleDelayedGuestMessage(message, config) {
   // 批次按发送者拆分，避免监听群里不同成员的消息混入同一批
   const senderKey = getSenderKey(message);
-  const batchKey = `pending-msgs-${senderKey}`;
-  const tokenKey = `pending-token-${senderKey}`;
+  const tokenKey = pendingTokenKey(senderKey);
 
-  const current = asArray(await kvGetJson(batchKey, []));
-  if (!current.some((m) => m.message_id === message.message_id)) {
-    current.push(message);
-  }
-
+  await kvPutJson(pendingMsgKey(senderKey, message.message_id), message, { expirationTtl: PENDING_TTL_SECONDS });
   const token = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  await kvPutJson(batchKey, current, { expirationTtl: 300 });
-  await kvPutJson(tokenKey, token, { expirationTtl: 300 });
+  await kvPutJson(tokenKey, token, { expirationTtl: PENDING_TTL_SECONDS });
 
-  if (current.length >= 10) {
-    await kvPutJson(batchKey, null, { expirationTtl: 60 });
-    await kvPutJson(tokenKey, null, { expirationTtl: 60 });
-    return processGuestMessageBatch(current, config);
+  // 攒满一批提前转达（KV list 有最终一致延迟，少算时由下方超时兜底）
+  const listed = await kvList(`pending-msgs-${senderKey}-`, 50);
+  if (listed.length >= 10) {
+    return flushPendingBatch(senderKey, config);
   }
 
   // Worker waitUntil 墙钟有限，内联最多等 MAX_INLINE_DELAY_SECONDS；若 isolate 提前被回收，
   // 遗留批次由 scheduled 触发 flushStalePendingBatches 兜底补发
   await sleep(Math.min(config.delay_seconds, MAX_INLINE_DELAY_SECONDS) * 1000);
 
-  const activeToken = await kvGetJson(tokenKey, null);
-  if (activeToken !== token) {
-    return;
-  }
-
-  const finalBatch = asArray(await kvGetJson(batchKey, []));
-  await kvPutJson(batchKey, null, { expirationTtl: 60 });
-  await kvPutJson(tokenKey, null, { expirationTtl: 60 });
-
-  if (!finalBatch.length) return;
-  return processGuestMessageBatch(finalBatch, config);
+  // token 已被更新的消息刷新（由它负责转达），或批次已被认领
+  if ((await kvGetJson(tokenKey, null)) !== token) return;
+  return flushPendingBatch(senderKey, config);
 }
 
 export async function processGuestMessageBatch(messages, config = null) {
@@ -445,28 +478,35 @@ export async function handleNotify(message, config = null) {
   }
 }
 
-// 兜底清理：内联延迟等待被 Worker 生命周期中断时，遗留的待处理批次由 scheduled 触发补发
+// 兜底清理：内联延迟等待被 Worker 生命周期中断时，遗留的待处理消息由 scheduled 触发补发
 export async function flushStalePendingBatches(config = null) {
   if (!config) config = await getRuntimeConfig();
   const staleAfterMs = (Math.max(config.delay_seconds || 0, MAX_INLINE_DELAY_SECONDS) + 10) * 1000;
-  const keys = await kvList('pending-msgs-');
+  const keys = await kvList('pending-msgs-', 500);
+  if (!keys.length) return;
 
-  for (const key of keys) {
-    const senderKey = String(key.name || '').replace(/^pending-msgs-/, '');
-    if (!senderKey) continue;
-    const batch = asArray(await kvGetJson(key.name, []));
-    if (!batch.length) continue;
+  // 按发送者聚合，key 名不参与身份解析
+  const loaded = await Promise.all(keys.map(async (k) => ({ key: k.name, msg: await kvGetJson(k.name, null) })));
+  const groups = new Map();
+  for (const item of loaded) {
+    if (!item.msg?.message_id) continue;
+    const senderKey = getSenderKey(item.msg);
+    if (!groups.has(senderKey)) groups.set(senderKey, []);
+    groups.get(senderKey).push(item);
+  }
 
-    const oldestMs = Math.min(...batch.map((m) => (m.date ? Number(m.date) * 1000 : Date.now())));
+  for (const [senderKey, items] of groups) {
+    const oldestMs = Math.min(...items.map((it) => (it.msg.date ? Number(it.msg.date) * 1000 : Date.now())));
     if (Date.now() - oldestMs < staleAfterMs) continue;
 
-    const tokenKey = `pending-token-${senderKey}`;
-    const token = await kvGetJson(tokenKey, null);
-    if (!token) continue; // 已被内联流程接管或处理完成
+    // token 为空也要兜底：处理方可能在「写完消息 key、还没写 token」
+    // 或「认领已过期」时崩溃，此时消息 key 还在 KV 里
+    const tokenState = await kvGetJson(pendingTokenKey(senderKey), null);
+    if (tokenState?.startsWith('claim:')) {
+      const claimedAt = Number(tokenState.split(':')[1]) || 0;
+      if (Date.now() - claimedAt < CLAIM_STALE_MS) continue; // 认领方仍在处理
+    }
 
-    // 先抢占 token 再清批次，避免与仍在等待的内联流程双发
-    await kvPutJson(tokenKey, null, { expirationTtl: 60 });
-    await kvPutJson(key.name, null, { expirationTtl: 60 });
-    await processGuestMessageBatch(batch, config);
+    await flushPendingBatch(senderKey, config);
   }
 }

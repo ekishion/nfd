@@ -13,55 +13,11 @@ import {
   getEnableForumTopics,
   asArray,
 } from './config.js';
+import { getMemoryCache, setMemoryCache, invalidateMemoryCache } from './memory-cache.js';
+import { utcDateKey } from './format.js';
 import { sendPlainText, requestTelegram } from './telegram.js';
 
-export const memoryCache = new Map();
 const pendingStats = new Map();
-const recentUpdates = new Set();
-
-function pruneExpiredMemoryCache() {
-  const now = Date.now();
-  for (const [key, item] of memoryCache.entries()) {
-    if (item.expiresAt <= now) {
-      memoryCache.delete(key);
-    }
-  }
-}
-
-export function isDuplicateUpdate(updateId) {
-  if (!updateId) return false;
-  if (recentUpdates.has(updateId)) return true;
-  if (recentUpdates.size >= 200) {
-    const first = recentUpdates.values().next().value;
-    recentUpdates.delete(first);
-  }
-  recentUpdates.add(updateId);
-  return false;
-}
-
-export function getMemoryCache(key) {
-  const item = memoryCache.get(key);
-  if (!item) return undefined;
-  if (item.expiresAt <= Date.now()) {
-    memoryCache.delete(key);
-    return undefined;
-  }
-  return item.value;
-}
-
-export function setMemoryCache(key, value, ttlMs = 60000) {
-  if (memoryCache.size >= 500) {
-    pruneExpiredMemoryCache();
-  }
-  memoryCache.set(key, {
-    value,
-    expiresAt: Date.now() + ttlMs,
-  });
-}
-
-export function invalidateMemoryCache(key) {
-  memoryCache.delete(key);
-}
 
 export function getKv() {
   return typeof nfd !== 'undefined' ? nfd : null;
@@ -182,22 +138,25 @@ export async function updateRuntimeConfig(patch) {
   return getRuntimeConfig();
 }
 
+// 统计按 UTC 日期分 key（48h 过期自动回收），/stats 与面板展示真正的「今日」数据
 export async function incrementStat(name) {
-  const count = (pendingStats.get(name) || 0) + 1;
+  const dateKey = utcDateKey();
+  const mapKey = `${name}@${dateKey}`;
+  const count = (pendingStats.get(mapKey) || 0) + 1;
   if (count >= 5) {
-    pendingStats.delete(name);
-    const key = `stat-${name}`;
+    pendingStats.delete(mapKey);
+    const key = `stat-${name}-${dateKey}`;
     const current = Number((await kvGetText(key, '0')) || 0);
-    await kvPutText(key, String(current + count));
+    await kvPutText(key, String(current + count), { expirationTtl: 2 * 24 * 3600 });
   } else {
-    pendingStats.set(name, count);
+    pendingStats.set(mapKey, count);
   }
 }
 
-export async function getStatCount(name) {
-  const key = `stat-${name}`;
+export async function getStatCount(name, dateKey = utcDateKey()) {
+  const key = `stat-${name}-${dateKey}`;
   const fromKv = Number((await kvGetText(key, '0')) || 0);
-  const fromMem = Number(pendingStats.get(name) || 0);
+  const fromMem = Number(pendingStats.get(`${name}@${dateKey}`) || 0);
   return fromKv + fromMem;
 }
 
@@ -261,12 +220,17 @@ export async function getGuestIdByTopic(topicId) {
   return cachedKvGetJson(reverseKey, 300000, null);
 }
 
-// Guest Profiling System
+// Guest Profiling System（profileFlushAt 为落盘节流状态，见 trackGuestProfile）
+const profileFlushAt = new Map();
+const PROFILE_FLUSH_INTERVAL_MS = 5 * 60 * 1000;
+
 export async function trackGuestProfile(message, identityKey = null, extraProfile = {}) {
   const chatId = identityKey || String(message.chat.id);
   const key = `profile-${chatId}`;
   const now = Date.now();
-  const current = (await kvGetJson(key, null)) || {
+  // 优先读内存缓存：两次落盘之间的累计都在这里，KV 里的值要到落盘那一刻才是新的
+  const existing = getMemoryCache(key) ?? await kvGetJson(key, null);
+  const current = existing || {
     firstSeen: now,
     messageCount: 0,
   };
@@ -289,7 +253,13 @@ export async function trackGuestProfile(message, identityKey = null, extraProfil
   };
 
   setMemoryCache(key, updated, 300000);
-  await kvPutJson(key, updated, { expirationTtl: 180 * 24 * 3600 });
+  // 每条留言都落盘会很快耗尽 KV 写入配额，改为建档首条 + 每 10 条 + 距上次落盘 ≥5 分钟才写
+  const lastFlushAt = profileFlushAt.get(key) || 0;
+  if (!existing || updated.messageCount % 10 === 0 || now - lastFlushAt >= PROFILE_FLUSH_INTERVAL_MS) {
+    if (profileFlushAt.size >= 1000) profileFlushAt.clear();
+    profileFlushAt.set(key, now);
+    await kvPutJson(key, updated, { expirationTtl: 180 * 24 * 3600 });
+  }
   return updated;
 }
 
